@@ -235,3 +235,29 @@ export function calculatePart2Score(correctCount) {
   if (correctCount === 4) return 1.0;
   return 0.0;
 }
+
+// Danh sách file PDF mẫu phiếu để người dùng tải về in
+// File phải nằm trong thư mục public/sheets/
+export const SHEET_DOWNLOADS = [
+  {
+    id: "bgd-2025",
+    name: "Phiếu TLTN BGD 2025",
+    description: "Mẫu phiếu chuẩn Bộ GD&ĐT (40 TN đơn + 8 Đúng/Sai + 6 TLN)",
+    filename: "Phieu-TLTN-BGD.pdf",
+    templateId: "2025_STANDARD",
+  },
+  {
+    id: "haiphong-toan",
+    name: "Phiếu TLTN Hải Phòng – Toán",
+    description: "Phiếu vào lớp 10 TP. Hải Phòng môn Toán",
+    filename: "Phieu-TLTN-HaiPhong-Toan.pdf",
+    templateId: "80_QUESTIONS",
+  },
+  {
+    id: "haiphong-cacmon",
+    name: "Phiếu TLTN Hải Phòng – Các môn khác",
+    description: "Phiếu vào lớp 10 TP. Hải Phòng các môn còn lại",
+    filename: "Phieu-TLTN-HaiPhong-CacMon.pdf",
+    templateId: "80_QUESTIONS",
+  },
+];

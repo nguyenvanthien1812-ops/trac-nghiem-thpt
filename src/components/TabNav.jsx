@@ -1,10 +1,12 @@
-import { Settings, Camera, Key, History } from "lucide-react";
+import { Settings, Camera, Key, History, Users, BookOpen } from "lucide-react";
 
 const TABS = [
-  { id: "dashboard", icon: Settings, label: "Bảng điều khiển" },
-  { id: "scanner",   icon: Camera,   label: "Quét phiếu" },
-  { id: "config",    icon: Key,      label: "Đáp án đề" },
-  { id: "history",   icon: History,  label: "Lịch sử" },
+  { id: "dashboard", icon: Settings,  label: "Điều khiển" },
+  { id: "scanner",   icon: Camera,    label: "Quét phiếu" },
+  { id: "config",    icon: Key,       label: "Đáp án đề" },
+  { id: "examsets",  icon: BookOpen,  label: "Bộ đề" },
+  { id: "classes",   icon: Users,     label: "Lớp học" },
+  { id: "history",   icon: History,   label: "Lịch sử" },
 ];
 
 export default function TabNav({ activeTab, onTabChange }) {

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback } from "react";
-import { Camera, X, ArrowLeft, ArrowRight, RefreshCw, RotateCcw, RotateCw, Upload, Save, Loader } from "lucide-react";
+import { Camera, X, ArrowLeft, RefreshCw, RotateCcw, RotateCw, Upload, Save, Loader } from "lucide-react";
 import { SHEET_WIDTH, SHEET_HEIGHT } from "../../utils/constants";
 import { scanSheet, preprocessImage, findCornerMarkers, computeAutoCalibration } from "../../utils/cvEngine";
 
@@ -32,6 +32,7 @@ export default function Scanner({
 }) {
   const previewCanvasRef = useRef(null);
   const debounceRef = useRef(null);
+  const autoGradedRef = useRef(false); // chỉ tự chấm 1 lần sau khi ảnh mới được scan
 
   const runScan = useCallback(() => {
     if (!imageSrc) return;
@@ -74,6 +75,12 @@ export default function Scanner({
         // Draw overlay on top of preprocessed image
         drawOverlay(ctx, results);
         onScanningChange?.(false);
+
+        // Tự động chấm điểm sau lần scan đầu tiên của mỗi ảnh mới
+        if (!autoGradedRef.current) {
+          autoGradedRef.current = true;
+          onGradeSheet(results);
+        }
       }, 16); // one frame delay
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -90,7 +97,10 @@ export default function Scanner({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [imageSrc, adjustments, selectedSubject, activeTemplate]);
 
-
+  // Reset auto-grade flag khi có ảnh mới
+  useEffect(() => {
+    autoGradedRef.current = false;
+  }, [imageSrc]);
 
   function drawOverlay(ctx, results) {
     const r = 7.5;
@@ -380,7 +390,7 @@ export default function Scanner({
             >
               {isScanning
                 ? <><Loader size={16} className="animate-spin" /> Đang quét...</>
-                : <>Xác nhận & Chấm điểm <ArrowRight size={16} /></>
+                : <><RefreshCw size={15} /> Chấm lại</>
               }
             </button>
           </div>

@@ -1,5 +1,7 @@
 import { useState, useMemo } from "react";
 import { List, BarChart2, Database, Upload, Download, Trash2, X, Search, ChevronDown, Eye, Filter } from "lucide-react";
+import ItemAnalysis from "./ItemAnalysis";
+
 
 // ── Detail Modal for a single history record ──────────────────────────────────
 function HistoryDetailModal({ item, onClose }) {
@@ -29,6 +31,7 @@ function HistoryDetailModal({ item, onClose }) {
             {score.toFixed(2)}
           </div>
           <div className="flex justify-center gap-4 text-[10px] text-slate-500 font-mono flex-wrap">
+            {item.className && <span>Lớp: <b className="text-blue-400">{item.className}</b></span>}
             <span>SBD: <b className="text-slate-300">{item.sbd || "?"}</b></span>
             <span>Mã đề: <b className="text-slate-300">{item.examCode || "?"}</b></span>
             <span>Môn: <b className="text-slate-300">{item.subjectName}</b></span>
@@ -153,7 +156,7 @@ export default function History({
   const filtered = useMemo(() => {
     return historyList.filter((item) => {
       const q = search.toLowerCase();
-      const matchSearch = !q || item.studentName?.toLowerCase().includes(q) || (item.sbd || "").includes(q) || (item.examCode || "").includes(q);
+      const matchSearch = !q || item.studentName?.toLowerCase().includes(q) || (item.sbd || "").includes(q) || (item.examCode || "").includes(q) || (item.className || "").toLowerCase().includes(q);
       const matchSubject = filterSubject === "all" || item.subjectName === filterSubject;
       const matchScore =
         filterScore === "all" ? true
@@ -167,7 +170,7 @@ export default function History({
 
   // Score distribution (5 bands)
   const bands = [0, 0, 0, 0, 0];
-  historyList.forEach(({ totalScore: s }) => {
+  filtered.forEach(({ totalScore: s }) => {
     if (s < 2.5) bands[0]++;
     else if (s < 5.0) bands[1]++;
     else if (s < 7.5) bands[2]++;
@@ -176,19 +179,12 @@ export default function History({
   });
   const maxBand = Math.max(...bands, 1);
 
-  // Question correct rates (Part I)
-  const questionRates = (() => {
-    if (historyList.length === 0) return [];
-    const count = preset.part1Count;
-    return Array.from({ length: count }, (_, i) => {
-      const correct = historyList.filter((r) => r.breakdown?.part1?.[i]?.isCorrect).length;
-      return { num: i + 1, rate: Math.round((correct / historyList.length) * 100) };
-    }).sort((a, b) => a.rate - b.rate);
-  })();
+  // Question correct rates removed - using ItemAnalysis component instead
+
 
   // Stats per exam code
   const statsByCode = {};
-  historyList.forEach((item) => {
+  filtered.forEach((item) => {
     const code = item.examCode || "?";
     if (!statsByCode[code]) statsByCode[code] = { count: 0, sum: 0, pass: 0 };
     statsByCode[code].count++;
@@ -202,10 +198,10 @@ export default function History({
 
   // Trend by Date (from item.id)
   const trendByDate = useMemo(() => {
-    if (historyList.length === 0) return [];
+    if (filtered.length === 0) return [];
     const map = {};
     // Sort oldest to newest for trend
-    [...historyList].sort((a, b) => a.id - b.id).forEach((item) => {
+    [...filtered].sort((a, b) => a.id - b.id).forEach((item) => {
       const d = new Date(item.id);
       const dateKey = `${d.getDate().toString().padStart(2, "0")}/${(d.getMonth() + 1).toString().padStart(2, "0")}`;
       if (!map[dateKey]) map[dateKey] = { count: 0, sum: 0 };
@@ -219,7 +215,7 @@ export default function History({
       avg: map[date].sum / map[date].count,
       count: map[date].count,
     }));
-  }, [historyList]);
+  }, [filtered]);
 
   return (
     <>
@@ -272,88 +268,89 @@ export default function History({
           </div>
         )}
 
+        {/* Common Search + Filter bar for both tabs */}
+        <div className="space-y-2">
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Tìm theo tên, SBD, mã đề..."
+                className="w-full pl-8 pr-3 py-2 text-xs bg-slate-900 border border-slate-800 rounded-xl text-slate-200 placeholder-slate-600 focus:outline-none focus:border-blue-600"
+              />
+              {search && (
+                <button onClick={() => setSearch("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">
+                  <X size={12} />
+                </button>
+              )}
+            </div>
+            <button
+              onClick={() => setShowFilter(!showFilter)}
+              className={`p-2 rounded-xl border text-xs font-bold flex items-center gap-1 transition-all ${
+                showFilter || hasActiveFilter
+                  ? "bg-blue-600/20 border-blue-600/40 text-blue-400"
+                  : "bg-slate-900 border-slate-800 text-slate-500"
+              }`}
+            >
+              <Filter size={13} />
+              {hasActiveFilter && <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />}
+            </button>
+          </div>
+
+          {showFilter && (
+            <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 space-y-2">
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[9px] text-slate-500 font-bold uppercase block mb-1">Môn học</label>
+                  <select
+                    value={filterSubject}
+                    onChange={(e) => setFilterSubject(e.target.value)}
+                    className="w-full bg-slate-800 border border-slate-700 text-slate-300 text-xs rounded-lg px-2 py-1.5 focus:outline-none"
+                  >
+                    <option value="all">Tất cả môn</option>
+                    {subjects.filter(s => s !== "all").map(s => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[9px] text-slate-500 font-bold uppercase block mb-1">Điểm số</label>
+                  <select
+                    value={filterScore}
+                    onChange={(e) => setFilterScore(e.target.value)}
+                    className="w-full bg-slate-800 border border-slate-700 text-slate-300 text-xs rounded-lg px-2 py-1.5 focus:outline-none"
+                  >
+                    <option value="all">Tất cả</option>
+                    <option value="excellent">Giỏi (≥8.0)</option>
+                    <option value="pass">Đạt (≥5.0)</option>
+                    <option value="fail">Chưa đạt (&lt;5.0)</option>
+                  </select>
+                </div>
+              </div>
+              {hasActiveFilter && (
+                <button
+                  onClick={() => { setSearch(""); setFilterSubject("all"); setFilterScore("all"); }}
+                  className="text-[10px] text-red-400 hover:text-red-300 font-bold"
+                >
+                  Xóa bộ lọc
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Results count */}
+          {historyList.length > 0 && (
+            <p className="text-[10px] text-slate-600 text-right">
+              {hasActiveFilter ? `${filtered.length} / ${historyList.length} kết quả` : `${historyList.length} bài thi`}
+            </p>
+          )}
+        </div>
+
         {/* LIST TAB */}
         {historySubTab === "list" && (
           <div className="space-y-3">
-            {/* Search + Filter bar */}
-            <div className="space-y-2">
-              <div className="flex gap-2">
-                <div className="relative flex-1">
-                  <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
-                  <input
-                    type="text"
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    placeholder="Tìm theo tên, SBD, mã đề..."
-                    className="w-full pl-8 pr-3 py-2 text-xs bg-slate-900 border border-slate-800 rounded-xl text-slate-200 placeholder-slate-600 focus:outline-none focus:border-blue-600"
-                  />
-                  {search && (
-                    <button onClick={() => setSearch("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">
-                      <X size={12} />
-                    </button>
-                  )}
-                </div>
-                <button
-                  onClick={() => setShowFilter(!showFilter)}
-                  className={`p-2 rounded-xl border text-xs font-bold flex items-center gap-1 transition-all ${
-                    showFilter || hasActiveFilter
-                      ? "bg-blue-600/20 border-blue-600/40 text-blue-400"
-                      : "bg-slate-900 border-slate-800 text-slate-500"
-                  }`}
-                >
-                  <Filter size={13} />
-                  {hasActiveFilter && <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />}
-                </button>
-              </div>
-
-              {showFilter && (
-                <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 space-y-2">
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="text-[9px] text-slate-500 font-bold uppercase block mb-1">Môn học</label>
-                      <select
-                        value={filterSubject}
-                        onChange={(e) => setFilterSubject(e.target.value)}
-                        className="w-full bg-slate-800 border border-slate-700 text-slate-300 text-xs rounded-lg px-2 py-1.5 focus:outline-none"
-                      >
-                        <option value="all">Tất cả môn</option>
-                        {subjects.filter(s => s !== "all").map(s => (
-                          <option key={s} value={s}>{s}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="text-[9px] text-slate-500 font-bold uppercase block mb-1">Điểm số</label>
-                      <select
-                        value={filterScore}
-                        onChange={(e) => setFilterScore(e.target.value)}
-                        className="w-full bg-slate-800 border border-slate-700 text-slate-300 text-xs rounded-lg px-2 py-1.5 focus:outline-none"
-                      >
-                        <option value="all">Tất cả</option>
-                        <option value="excellent">Giỏi (≥8.0)</option>
-                        <option value="pass">Đạt (≥5.0)</option>
-                        <option value="fail">Chưa đạt (&lt;5.0)</option>
-                      </select>
-                    </div>
-                  </div>
-                  {hasActiveFilter && (
-                    <button
-                      onClick={() => { setSearch(""); setFilterSubject("all"); setFilterScore("all"); }}
-                      className="text-[10px] text-red-400 hover:text-red-300 font-bold"
-                    >
-                      Xóa bộ lọc
-                    </button>
-                  )}
-                </div>
-              )}
-
-              {/* Results count */}
-              {historyList.length > 0 && (
-                <p className="text-[10px] text-slate-600 text-right">
-                  {hasActiveFilter ? `${filtered.length} / ${historyList.length} kết quả` : `${historyList.length} bài thi`}
-                </p>
-              )}
-            </div>
 
             {historyList.length === 0 ? (
               <p className="text-center py-10 text-slate-500 text-xs">Chưa có bài thi nào được chấm.</p>
@@ -366,6 +363,7 @@ export default function History({
                     <div className="space-y-1 min-w-0 flex-1">
                       <h4 className="text-xs font-bold text-slate-200 truncate">{item.studentName}</h4>
                       <p className="text-[10px] text-slate-500 flex gap-2 flex-wrap">
+                        {item.className && <span>Lớp: <b className="text-blue-400">{item.className}</b></span>}
                         <span>SBD: <b>{item.sbd || "?"}</b></span>
                         <span>Mã đề: <b>{item.examCode || "?"}</b></span>
                         <span>{item.subjectName}</span>
@@ -514,35 +512,8 @@ export default function History({
                   </div>
                 )}
 
-                {/* Hardest Questions */}
-                {questionRates.length > 0 && (
-                  <div className="p-4 rounded-2xl glass-card border border-slate-800 space-y-3">
-                    <h4 className="text-xs font-bold text-slate-300 border-b border-slate-800 pb-2">
-                      CÂU HỎI KHÓ NHẤT (Phần I — tỷ lệ đúng thấp)
-                    </h4>
-                    <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
-                      {questionRates.slice(0, 8).map((item) => (
-                        <div key={item.num} className="flex justify-between items-center p-2.5 rounded-lg bg-slate-900 border border-slate-800 text-xs">
-                          <span className="font-bold text-slate-300">Câu {item.num}</span>
-                          <div className="flex items-center gap-3">
-                            <div className="w-20 bg-slate-800 rounded-full h-1.5 overflow-hidden">
-                              <div
-                                className={`h-full rounded-full ${item.rate < 40 ? "bg-red-500" : item.rate < 70 ? "bg-amber-500" : "bg-emerald-500"}`}
-                                style={{ width: `${item.rate}%` }}
-                              />
-                            </div>
-                            <span className={`font-bold ${item.rate < 45 ? "text-red-400" : "text-slate-300"}`}>
-                              {item.rate}% đúng
-                            </span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                    <p className="text-[10px] text-slate-500 italic">
-                      Hiển thị các câu có tỷ lệ đúng thấp nhất. Màu đỏ = dưới 40%.
-                    </p>
-                  </div>
-                )}
+                {/* Item Analysis */}
+                <ItemAnalysis historyList={filtered} />
               </>
             )}
           </div>

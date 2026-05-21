@@ -1,6 +1,7 @@
-import { Camera, Upload, Play, CheckCircle, HelpCircle } from "lucide-react";
+import { Camera, Upload, Play, CheckCircle, HelpCircle, FileDown } from "lucide-react";
+import { SHEET_DOWNLOADS } from "../../utils/constants";
 
-export default function Dashboard({ historyList, onLoadDemo, onStartCamera, onTriggerFileInput, fileInputRef, onFileUpload }) {
+export default function Dashboard({ historyList, onLoadDemo, onStartCamera, onTriggerFileInput, fileInputRef, onFileUpload, onDownloadSheet }) {
   const total = historyList.length;
   const avgScore = total > 0
     ? (historyList.reduce((s, i) => s + i.totalScore, 0) / total).toFixed(2)
@@ -60,6 +61,35 @@ export default function Dashboard({ historyList, onLoadDemo, onStartCamera, onTr
         />
       </div>
 
+      {/* Download Sheet Templates */}
+      <div className="p-5 rounded-2xl glass-panel space-y-3 border border-slate-800">
+        <h3 className="font-bold text-xs uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+          <FileDown size={14} className="text-amber-400" /> Tải mẫu phiếu về in
+        </h3>
+        <div className="space-y-2">
+          {SHEET_DOWNLOADS.map((sheet) => (
+            <button
+              key={sheet.id}
+              onClick={() => onDownloadSheet(sheet.filename, sheet.name)}
+              className="w-full flex items-center justify-between gap-3 p-3 rounded-xl bg-slate-900/60 border border-slate-800 hover:border-amber-500/40 hover:bg-amber-500/5 active:scale-[0.98] transition-all text-left group"
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="p-2 rounded-lg bg-amber-500/10 text-amber-400 shrink-0 group-hover:bg-amber-500/20 transition-colors">
+                  <FileDown size={15} />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs font-bold text-slate-200 truncate">{sheet.name}</p>
+                  <p className="text-[10px] text-slate-500 truncate">{sheet.description}</p>
+                </div>
+              </div>
+              <span className="text-[9px] font-bold text-amber-500 bg-amber-500/10 px-2 py-1 rounded-full shrink-0 border border-amber-500/20">
+                PDF
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+
       {/* Quick Stats Panel */}
       <div className="p-5 rounded-2xl glass-panel relative overflow-hidden">
         <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/5 rounded-full blur-2xl pointer-events-none" />
@@ -90,9 +120,10 @@ export default function Dashboard({ historyList, onLoadDemo, onStartCamera, onTr
         <ul className="list-disc pl-4 space-y-1.5 text-slate-400 text-[11px]">
           <li>Đặt phiếu trên mặt phẳng tương phản, đủ ánh sáng.</li>
           <li>Tránh để bóng tay che khuất phiếu khi chụp.</li>
-          <li>Sau khi chụp, dùng nút <b>Tự động căn chỉnh</b> hoặc điều chỉnh lưới thủ công trước khi chấm.</li>
+          <li>Sau khi chụp, app tự chấm điểm ngay. Nếu sai hãy chỉnh lưới rồi nhấn <b>Chấm lại</b>.</li>
         </ul>
       </div>
     </div>
   );
 }
+

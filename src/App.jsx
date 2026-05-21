@@ -8,6 +8,8 @@ import Dashboard from "./components/tabs/Dashboard";
 import Scanner from "./components/tabs/Scanner";
 import Config from "./components/tabs/Config";
 import History from "./components/tabs/History";
+import Classes from "./components/tabs/Classes";
+import ExamSets from "./components/tabs/ExamSets";
 
 const MAX_HISTORY = 500;
 
@@ -79,6 +81,10 @@ export default function App() {
   const [isEditingResult, setIsEditingResult] = useState(false);
   const [tempStudentName, setTempStudentName] = useState("");
 
+  // ── Classes & Students ────────────────────────────────────────────────
+  // Format: [{ id, name, students: [{ sbd, name }] }]
+  const [classes, setClasses] = useState(() => loadStore("thpt_grader_classes", []));
+
   // ── Refs ─────────────────────────────────────────────────────────────────────
   const videoRef       = useRef(null);
   const fileInputRef   = useRef(null);
@@ -91,6 +97,7 @@ export default function App() {
   useEffect(() => { safeStore("thpt_grader_history",      historyList);       }, [historyList]);
   useEffect(() => { safeStore("thpt_grader_calibrations", savedCalibrations); }, [savedCalibrations]);
   useEffect(() => { safeStore("thpt_grader_template",     activeTemplateId);  }, [activeTemplateId]);
+  useEffect(() => { safeStore("thpt_grader_classes",      classes);           }, [classes]);
 
   // ── Reset scan khi đổi mẫu phiếu ──────────────────────────────────────────────
   const prevTemplateRef = useRef(activeTemplateId);
@@ -122,6 +129,92 @@ export default function App() {
       return next;
     });
     showToast("Đã xóa cấu hình căn chỉnh đã lưu.", "warning");
+  };
+
+  // ── Classes CRUD ──────────────────────────────────────────────────────────────
+  // Lookup student name from SBD across all classes
+  const lookupStudentName = (sbd) => {
+    if (!sbd) return null;
+    for (const cls of classes) {
+      const student = cls.students.find((s) => s.sbd === sbd);
+      if (student) return { name: student.name, className: cls.name };
+    }
+    return null;
+  };
+
+  const addClass = (name) => {
+    if (!name.trim()) return;
+    const newClass = { id: Date.now().toString(), name: name.trim(), students: [] };
+    setClasses((prev) => [...prev, newClass]);
+    showToast(`Đã tạo lớp "${name.trim()}"`);
+  };
+
+  const renameClass = (classId, newName) => {
+    if (!newName.trim()) return;
+    setClasses((prev) => prev.map((c) => c.id === classId ? { ...c, name: newName.trim() } : c));
+  };
+
+  const deleteClass = (classId) => {
+    setClasses((prev) => prev.filter((c) => c.id !== classId));
+    showToast("Đã xóa lớp học.", "warning");
+  };
+
+  const addStudent = (classId, sbd, name) => {
+    if (!sbd.trim() || !name.trim()) return;
+    setClasses((prev) => prev.map((c) => {
+      if (c.id !== classId) return c;
+      // Prevent duplicate SBD in same class
+      if (c.students.some((s) => s.sbd === sbd.trim())) {
+        showToast(`SBD ${sbd} đã tồn tại trong lớp này!`, "error");
+        return c;
+      }
+      return { ...c, students: [...c.students, { sbd: sbd.trim(), name: name.trim() }] };
+    }));
+  };
+
+  const editStudent = (classId, oldSbd, newSbd, newName) => {
+    setClasses((prev) => prev.map((c) => {
+      if (c.id !== classId) return c;
+      return {
+        ...c,
+        students: c.students.map((s) =>
+          s.sbd === oldSbd ? { sbd: newSbd.trim(), name: newName.trim() } : s
+        ),
+      };
+    }));
+  };
+
+  const deleteStudent = (classId, sbd) => {
+    setClasses((prev) => prev.map((c) =>
+      c.id !== classId ? c : { ...c, students: c.students.filter((s) => s.sbd !== sbd) }
+    ));
+  };
+
+  const importStudentsFromCSV = (classId, csvText) => {
+    // Expected format: SBD,Họ tên (one per line, with or without header)
+    const lines = csvText.trim().split(/\r?\n/);
+    let added = 0, skipped = 0;
+    const newStudents = [];
+    lines.forEach((line) => {
+      const parts = line.split(",");
+      if (parts.length < 2) return;
+      const sbd = parts[0].trim();
+      const name = parts.slice(1).join(",").trim();
+      if (!sbd || !name || sbd.toLowerCase() === "sbd") return; // skip header
+      newStudents.push({ sbd, name });
+    });
+    setClasses((prev) => prev.map((c) => {
+      if (c.id !== classId) return c;
+      const existingSbds = new Set(c.students.map((s) => s.sbd));
+      const toAdd = newStudents.filter((s) => {
+        if (existingSbds.has(s.sbd)) { skipped++; return false; }
+        existingSbds.add(s.sbd);
+        added++;
+        return true;
+      });
+      return { ...c, students: [...c.students, ...toAdd] };
+    }));
+    showToast(`Đã nhập ${added} học sinh${skipped > 0 ? `, bỏ qua ${skipped} SBD trùng` : ""}.`);
   };
 
   // ── Custom Confirm Dialog ─────────────────────────────────────────────────────
@@ -186,6 +279,18 @@ export default function App() {
     return () => window.removeEventListener("keydown", handler);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [confirmDialog, gradingResult, isLiveCamera, activeTab, imageSrc]);
+
+  // ── Auto-lookup student name from SBD when grading result appears ──────────────
+  useEffect(() => {
+    if (!gradingResult?.sbd) return;
+    const found = lookupStudentName(gradingResult.sbd);
+    if (found) {
+      setTempStudentName(found.name);
+    } else {
+      setTempStudentName("");
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gradingResult]);
 
   // ── Confetti ──────────────────────────────────────────────────────────────────
   const triggerConfetti = () => {
@@ -583,6 +688,7 @@ export default function App() {
 
   const saveToHistory = () => {
     if (!gradingResult) return;
+    const studentInfo = lookupStudentName(gradingResult.sbd);
     addToHistory({
       studentName: tempStudentName.trim() || `Thí sinh SBD ${gradingResult.sbd || "Trống"}`,
       sbd:          gradingResult.sbd,
@@ -590,6 +696,7 @@ export default function App() {
       subjectName:  preset.name,
       templateId:   activeTemplateId,
       templateName: TEMPLATES[activeTemplateId].name,
+      className:    studentInfo?.className || null,
       totalScore:   gradingResult.totalScore,
       gradedAt:     new Date().toLocaleString("vi-VN"),
       breakdown:    { part1: gradingResult.p1Breakdown, part2: gradingResult.p2Breakdown, part3: gradingResult.p3Breakdown },
@@ -683,6 +790,18 @@ export default function App() {
     e.target.value = "";
   };
 
+  // ── Download template sheet PDF ──────────────────────────────────────────────
+  const downloadSheet = (filename, displayName) => {
+    const a = document.createElement("a");
+    a.href = `/sheets/${filename}`;
+    a.download = filename;
+    a.target = "_blank";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    showToast(`Đang tải: ${displayName}`);
+  };
+
   // ── Tab navigation ────────────────────────────────────────────────────────────
   const handleTabChange = (tab) => {
     if (tab !== "scanner") stopCamera();
@@ -711,6 +830,7 @@ export default function App() {
             onFileUpload={handleFileUpload}
             fileInputRef={fileInputRef}
             onNavigateHistory={() => { handleTabChange("history"); setHistorySubTab("list"); }}
+            onDownloadSheet={downloadSheet}
           />
         )}
 
@@ -753,6 +873,32 @@ export default function App() {
             preset={preset}
             activeTemplate={TEMPLATES[activeTemplateId]}
             selectedSubject={selectedSubject}
+            showToast={showToast}
+            showConfirm={showConfirm}
+          />
+        )}
+
+        {activeTab === "classes" && (
+          <Classes
+            classes={classes}
+            historyList={historyList}
+            onAddClass={addClass}
+            onRenameClass={renameClass}
+            onDeleteClass={deleteClass}
+            onAddStudent={addStudent}
+            onEditStudent={editStudent}
+            onDeleteStudent={deleteStudent}
+            onImportCSV={importStudentsFromCSV}
+            showConfirm={showConfirm}
+          />
+        )}
+
+        {activeTab === "examsets" && (
+          <ExamSets
+            answerKeys={answerKeys}
+            setAnswerKeys={setAnswerKeys}
+            activeExamCode={activeExamCode}
+            setActiveExamCode={setActiveExamCode}
             showToast={showToast}
             showConfirm={showConfirm}
           />
