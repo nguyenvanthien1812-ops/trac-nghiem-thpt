@@ -1,0 +1,494 @@
+// Light-weight Browser CV Engine for THPT Bubble Sheet Grading
+// Uses standard canvas pixel operations. Analyzes Red channel to filter out red ink guidelines.
+
+import { SHEET_WIDTH, SHEET_HEIGHT } from "./constants";
+
+// ─── Preprocessing ───────────────────────────────────────────────────────────
+
+// Auto-contrast stretch on the red channel to improve bubble detection
+// in photos with poor lighting or low contrast.
+export function preprocessImage(ctx, width, height) {
+  const imgData = ctx.getImageData(0, 0, width, height);
+  const data = imgData.data;
+
+  // Sample min/max of the red channel (every 8th pixel for speed)
+  let minR = 255, maxR = 0;
+  for (let i = 0; i < data.length; i += 4 * 8) {
+    const r = data[i];
+    if (r < minR) minR = r;
+    if (r > maxR) maxR = r;
+  }
+
+  const range = maxR - minR;
+  if (range < 30) return; // Already high-contrast; skip
+
+  const factor = 255 / range;
+  for (let i = 0; i < data.length; i += 4) {
+    data[i] = Math.min(255, Math.max(0, Math.round((data[i] - minR) * factor)));
+    // G and B channels are intentionally left unchanged to preserve colour cues
+  }
+  ctx.putImageData(imgData, 0, 0);
+}
+
+// ─── Corner Marker Detection ─────────────────────────────────────────────────
+
+// The THPT answer sheet has a ~25×25 px dark square at each of its 4 corners,
+// positioned ~15 px from the page edge.  This function scans each corner region
+// and returns the centroid of the dark cluster, or null if not found.
+export function findCornerMarkers(imgData, width, height) {
+  const SEARCH = 0.12;          // Search in 12% of the image from each corner
+  const DARK_THRESH = 90;       // Brightness threshold for "dark" pixels
+  const MIN_PIXELS = 40;        // Minimum dark pixel count for a valid marker
+
+  function centroid(x0, y0, x1, y1) {
+    let sx = 0, sy = 0, n = 0;
+    for (let y = y0; y < y1; y++) {
+      for (let x = x0; x < x1; x++) {
+        const i = (y * width + x) * 4;
+        const brightness = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+        if (brightness < DARK_THRESH) { sx += x; sy += y; n++; }
+      }
+    }
+    return n >= MIN_PIXELS ? { x: sx / n, y: sy / n } : null;
+  }
+
+  const data = imgData.data;
+  const sw = Math.floor(width  * SEARCH);
+  const sh = Math.floor(height * SEARCH);
+
+  const tl = centroid(0,         0,          sw,    sh);
+  const tr = centroid(width - sw, 0,          width, sh);
+  const bl = centroid(0,         height - sh, sw,    height);
+  const br = centroid(width - sw, height - sh, width, height);
+
+  return (tl && tr && bl && br) ? { tl, tr, bl, br } : null;
+}
+
+// ─── Auto-Calibration ────────────────────────────────────────────────────────
+
+// Given detected corner pixel positions (from findCornerMarkers) and the
+// source image dimensions, compute nudge / scale / rotation adjustments that
+// will align the detected sheet with the expected canonical layout.
+export function computeAutoCalibration(corners, imgWidth, imgHeight) {
+  if (!corners) return null;
+
+  // Expected corner positions in the SHEET_WIDTH × SHEET_HEIGHT space (px)
+  const M = 27; // margin from corner square centre to sheet edge
+  const expected = {
+    tl: { x: M,              y: M               },
+    tr: { x: SHEET_WIDTH - M, y: M               },
+    bl: { x: M,              y: SHEET_HEIGHT - M },
+    br: { x: SHEET_WIDTH - M, y: SHEET_HEIGHT - M },
+  };
+
+  // Scale detected corners from source resolution to sheet resolution
+  const rx = SHEET_WIDTH  / imgWidth;
+  const ry = SHEET_HEIGHT / imgHeight;
+  const det = {
+    tl: { x: corners.tl.x * rx, y: corners.tl.y * ry },
+    tr: { x: corners.tr.x * rx, y: corners.tr.y * ry },
+    bl: { x: corners.bl.x * rx, y: corners.bl.y * ry },
+    br: { x: corners.br.x * rx, y: corners.br.y * ry },
+  };
+
+  // Translation: align top-left corner
+  const nudgeX = ((expected.tl.x - det.tl.x) / SHEET_WIDTH)  * 100;
+  const nudgeY = ((expected.tl.y - det.tl.y) / SHEET_HEIGHT) * 100;
+
+  // Scale: ratio of expected span to detected span
+  const detW = det.tr.x - det.tl.x;
+  const expW = expected.tr.x - expected.tl.x;
+  const scaleX = detW > 10 ? expW / detW : 1;
+
+  const detH = det.bl.y - det.tl.y;
+  const expH = expected.bl.y - expected.tl.y;
+  const scaleY = detH > 10 ? expH / detH : 1;
+
+  // Rotation: angle of the top edge
+  const dx = det.tr.x - det.tl.x;
+  const dy = det.tr.y - det.tl.y;
+  const rotation = -(Math.atan2(dy, dx) * 180) / Math.PI;
+
+  // Sanity bounds — reject wildly wrong detections
+  if (Math.abs(nudgeX) > 15 || Math.abs(nudgeY) > 15) return null;
+  if (Math.abs(scaleX - 1) > 0.3 || Math.abs(scaleY - 1) > 0.3) return null;
+  if (Math.abs(rotation) > 15) return null;
+
+  return {
+    nudgeX:   Math.round(nudgeX   * 100) / 100,
+    nudgeY:   Math.round(nudgeY   * 100) / 100,
+    scaleX:   Math.round(scaleX   * 1000) / 1000,
+    scaleY:   Math.round(scaleY   * 1000) / 1000,
+    rotation: Math.round(rotation * 10)   / 10,
+  };
+}
+
+// Helper: Get grayscale value from red channel (efficient for red dropout bubble sheets)
+// Red ink reflects red light, so in the red channel, red ink and white paper both appear bright (~255).
+// Black/blue pen or pencil marks appear dark (~0) in all channels.
+function getPixelIntensityRed(imgData, x, y, width) {
+  const idx = (Math.floor(y) * width + Math.floor(x)) * 4;
+  if (idx < 0 || idx >= imgData.data.length) return 255;
+  return imgData.data[idx]; // Red channel is the first byte
+}
+
+// Calculate the darkness score of a bubble using relative contrast
+// We compare the average intensity inside the bubble radius to a ring just outside the bubble.
+export function getBubbleDarkness(ctx, imgData, x, y, r = 7) {
+  let insideSum = 0;
+  let insideCount = 0;
+  let outsideSum = 0;
+  let outsideCount = 0;
+
+  // We sample inside a bounding box of size 2.5 * r
+  const boxSize = Math.ceil(r * 2.5);
+  const startX = Math.max(0, Math.floor(x - boxSize));
+  const endX = Math.min(imgData.width - 1, Math.ceil(x + boxSize));
+  const startY = Math.max(0, Math.floor(y - boxSize));
+  const endY = Math.min(imgData.height - 1, Math.ceil(y + boxSize));
+
+  for (let py = startY; py <= endY; py++) {
+    for (let px = startX; px <= endX; px++) {
+      const distSq = (px - x) * (px - x) + (py - y) * (py - y);
+      const intensity = getPixelIntensityRed(imgData, px, py, imgData.width);
+
+      if (distSq <= r * r) {
+        insideSum += intensity;
+        insideCount++;
+      } else if (distSq >= (1.4 * r) * (1.4 * r) && distSq <= (2.2 * r) * (2.2 * r)) {
+        outsideSum += intensity;
+        outsideCount++;
+      }
+    }
+  }
+
+  const avgInside = insideCount > 0 ? insideSum / insideCount : 255;
+  const avgOutside = outsideCount > 0 ? outsideSum / outsideCount : 255;
+
+  // A filled bubble is darker than its background, meaning avgInside < avgOutside.
+  // We return the difference. Higher score = darker/more filled.
+  return Math.max(0, avgOutside - avgInside);
+}
+
+// Map percentage coordinates (0 to 100) to actual pixel coordinates on the 800x1130 canvas,
+// applying grid offsets (nudgeX, nudgeY) and scaling (scaleX, scaleY).
+export function getPixelCoords(pctX, pctY, config) {
+  const { nudgeX = 0, nudgeY = 0, scaleX = 1, scaleY = 1 } = config;
+  
+  // Center of the sheet is 50%
+  const centerX = SHEET_WIDTH / 2;
+  const centerY = SHEET_HEIGHT / 2;
+
+  // Convert percentage to coordinate relative to center, scale it, add offset, and convert back
+  const pixelX = ((pctX / 100 * SHEET_WIDTH) - centerX) * scaleX + centerX + (nudgeX / 100 * SHEET_WIDTH);
+  const pixelY = ((pctY / 100 * SHEET_HEIGHT) - centerY) * scaleY + centerY + (nudgeY / 100 * SHEET_HEIGHT);
+
+  return { x: pixelX, y: pixelY };
+}
+
+// Scans the entire sheet using the layout config and manual adjustments
+export function scanSheet(ctx, layout, adjustments, template) {
+  const imgData = ctx.getImageData(0, 0, SHEET_WIDTH, SHEET_HEIGHT);
+  const results = {
+    sbd: "",
+    code: "",
+    part1: [],
+    part2: [],
+    part3: [],
+    bubbleScores: {
+      sbd: [],
+      code: [],
+      part1: [],
+      part2: [],
+      part3: []
+    }
+  };
+
+  const bubbleRadius = 6.5;
+  const fillThreshold = 25; // Minimum darkness difference to count as filled
+
+  // Helper to scan a standard matrix grid (like SBD, Exam Code)
+  function scanGrid(gridConfig) {
+    const gridResults = [];
+    const scoresMatrix = [];
+
+    for (let c = 0; c < gridConfig.cols; c++) {
+      const colScores = [];
+      const colX = gridConfig.x + (gridConfig.w / (gridConfig.cols - 1 || 1)) * c;
+      
+      for (let r = 0; r < gridConfig.rows; r++) {
+        const rowY = gridConfig.y + (gridConfig.h / (gridConfig.rows - 1 || 1)) * r;
+        const coords = getPixelCoords(colX, rowY, adjustments);
+        const score = getBubbleDarkness(ctx, imgData, coords.x, coords.y, bubbleRadius);
+        colScores.push({ row: r, score, coords });
+      }
+      scoresMatrix.push(colScores);
+
+      // Find the darkest bubble in this column
+      let maxScore = -1;
+      let selectedRow = -1;
+      for (let r = 0; r < gridConfig.rows; r++) {
+        if (colScores[r].score > maxScore) {
+          maxScore = colScores[r].score;
+          selectedRow = r;
+        }
+      }
+
+      // If the darkest bubble exceeds threshold, record it, else leave empty
+      if (maxScore >= fillThreshold) {
+        gridResults.push(selectedRow.toString());
+      } else {
+        gridResults.push("?"); // Empty or unreadable
+      }
+    }
+
+    return { value: gridResults.join(""), scores: scoresMatrix };
+  }
+
+  // 1. Scan SBD
+  const sbdScan = scanGrid(layout.sbd);
+  results.sbd = sbdScan.value;
+  results.bubbleScores.sbd = sbdScan.scores;
+
+  // 2. Scan Exam Code
+  const codeScan = scanGrid(layout.code);
+  results.code = codeScan.value;
+  results.bubbleScores.code = codeScan.scores;
+
+  // 3. Scan Part I (40 questions, single option A-D)
+  const part1Count = template.part1Count;
+  const p1Results = Array(part1Count).fill("");
+  const p1Scores = [];
+
+  for (let qIdx = 0; qIdx < part1Count; qIdx++) {
+    const colNum = Math.floor(qIdx / layout.part1.rows);
+    const rowNum = qIdx % layout.part1.rows;
+
+    if (colNum >= layout.part1.cols.length) continue;
+
+    const colConfig = layout.part1.cols[colNum];
+    const qY = layout.part1.y + (layout.part1.h / (layout.part1.rows - 1)) * rowNum;
+    
+    const qScores = [];
+    for (let optIdx = 0; optIdx < 4; optIdx++) {
+      const optX = colConfig.x + (colConfig.w / (layout.part1.options.length - 1 || 1)) * optIdx;
+      const coords = getPixelCoords(optX, qY, adjustments);
+      const score = getBubbleDarkness(ctx, imgData, coords.x, coords.y, bubbleRadius);
+      qScores.push({ option: layout.part1.options[optIdx], score, coords });
+    }
+    p1Scores.push({ question: qIdx + 1, scores: qScores });
+
+    // Determine filled bubbles
+    let maxScore = -1;
+    let selectedOpt = "";
+    let filledCount = 0;
+
+    for (let optIdx = 0; optIdx < 4; optIdx++) {
+      if (qScores[optIdx].score >= fillThreshold) {
+        filledCount++;
+      }
+      if (qScores[optIdx].score > maxScore) {
+        maxScore = qScores[optIdx].score;
+        selectedOpt = qScores[optIdx].option;
+      }
+    }
+
+    // If multiple options filled, or none filled, or max score is low, mark as empty
+    if (filledCount > 1) {
+      p1Results[qIdx] = "MULTIPLE";
+    } else if (maxScore >= fillThreshold) {
+      p1Results[qIdx] = selectedOpt;
+    } else {
+      p1Results[qIdx] = ""; // Blank
+    }
+  }
+  results.part1 = p1Results;
+  results.bubbleScores.part1 = p1Scores;
+
+  // 4. Scan Part II (True/False, số câu tuỳ mẫu)
+  const part2Count = template.part2Count;
+  const p2Results = Array(part2Count).fill(null).map(() => ({ a: "", b: "", c: "", d: "" }));
+  const p2Scores = [];
+
+  if (part2Count > 0 && layout.part2) {
+  // Số câu mỗi cột = tổng câu / số cột (làm tròn lên để xử lý cột cuối ít câu hơn)
+  const p2QsPerCol = Math.ceil(part2Count / layout.part2.cols.length);
+  // Tổng số dòng mỗi cột = số câu/cột × 4 ý (a,b,c,d)
+  const p2RowsPerCol = p2QsPerCol * 4;
+
+  for (let qIdx = 0; qIdx < part2Count; qIdx++) {
+    const colNum = Math.floor(qIdx / p2QsPerCol);
+    const subQGroup = qIdx % p2QsPerCol;
+
+    if (colNum >= layout.part2.cols.length) continue;
+
+    const colConfig = layout.part2.cols[colNum];
+    const subQScores = { a: [], b: [], c: [], d: [] };
+    const subQKeys = ["a", "b", "c", "d"];
+
+    for (let subIdx = 0; subIdx < 4; subIdx++) {
+      const overallRowIdx = subQGroup * 4 + subIdx;
+      // Chia đều chiều cao theo tổng số dòng của cột (p2RowsPerCol vị trí = p2RowsPerCol-1 khoảng)
+      const qY = layout.part2.y + (layout.part2.h / (p2RowsPerCol - 1)) * overallRowIdx;
+      const subKey = subQKeys[subIdx];
+
+      const optScores = [];
+      // Option 0: Đúng (True), Option 1: Sai (False)
+      for (let optIdx = 0; optIdx < 2; optIdx++) {
+        // Đúng (T) is left column, Sai (F) is right column
+        const optX = colConfig.x + (colConfig.w / 1) * optIdx; // Width divided by 1 gives left (0) and right (1)
+        const coords = getPixelCoords(optX, qY, adjustments);
+        const score = getBubbleDarkness(ctx, imgData, coords.x, coords.y, bubbleRadius);
+        optScores.push({ option: layout.part2.options[optIdx], score, coords });
+      }
+      subQScores[subKey] = optScores;
+
+      // Classify True/False
+      const scoreTrue = optScores[0].score;
+      const scoreFalse = optScores[1].score;
+
+      const diff = Math.abs(scoreTrue - scoreFalse);
+
+      if (scoreTrue >= fillThreshold && scoreFalse >= fillThreshold) {
+        p2Results[qIdx][subKey] = "BOTH";
+      } else if (scoreTrue >= fillThreshold && scoreTrue > scoreFalse && diff > 10) {
+        p2Results[qIdx][subKey] = "T"; // Đúng
+      } else if (scoreFalse >= fillThreshold && scoreFalse > scoreTrue && diff > 10) {
+        p2Results[qIdx][subKey] = "F"; // Sai
+      } else {
+        p2Results[qIdx][subKey] = ""; // Blank
+      }
+    }
+    p2Scores.push({ question: qIdx + 1, scores: subQScores });
+  }
+  } // end if (part2Count > 0 && layout.part2)
+  results.part2 = p2Results;
+  results.bubbleScores.part2 = p2Scores;
+
+  // 5. Scan Part III (6 short answers)
+  const part3Count = template.part3Count;
+  const p3Results = Array(part3Count).fill("");
+  const p3Scores = [];
+
+  for (let qIdx = 0; qIdx < part3Count; qIdx++) {
+    const colConfig = layout.part3.cols[qIdx];
+    const qScores = {
+      sign: null, // Minus sign bubble
+      comma: [],  // Comma row (3 columns)
+      digits: []  // 0-9 digits (10 rows x 3 columns)
+    };
+
+    // Cột ở hàng 2 (mẫu Mở rộng) có thêm độ lệch dọc dy (%)
+    const dyOffset = colConfig.dy || 0;
+
+    // 5a. Scan negative sign '-' (Row 1 of the column)
+    const signY = layout.part3.y + dyOffset;
+    const signX = colConfig.x;
+    const signCoords = getPixelCoords(signX, signY, adjustments);
+    const signScore = getBubbleDarkness(ctx, imgData, signCoords.x, signCoords.y, bubbleRadius);
+    qScores.sign = { score: signScore, coords: signCoords };
+    const isNegative = signScore >= fillThreshold;
+
+    // 5b. Scan comma ',' (Row 2 of the column, 3 positions)
+    const commaY = layout.part3.y + dyOffset + (layout.part3.h / 11) * 1;
+    const commaColScores = [];
+    for (let c = 0; c < 3; c++) {
+      const commaX = colConfig.x + (colConfig.w / 2) * c;
+      const coords = getPixelCoords(commaX, commaY, adjustments);
+      const score = getBubbleDarkness(ctx, imgData, coords.x, coords.y, bubbleRadius);
+      commaColScores.push({ col: c, score, coords });
+    }
+    qScores.comma = commaColScores;
+
+    // Find if a comma bubble is filled
+    let commaIndex = -1;
+    let maxCommaScore = -1;
+    for (let c = 0; c < 3; c++) {
+      if (commaColScores[c].score > maxCommaScore) {
+        maxCommaScore = commaColScores[c].score;
+        commaIndex = c;
+      }
+    }
+    const hasComma = maxCommaScore >= fillThreshold ? commaIndex : -1;
+
+    // 5c. Scan digits 0-9 (Rows 3 to 12 of the column, 3 columns)
+    const digitsResults = [];
+    const digitScoresMatrix = []; // [col][row]
+
+    for (let c = 0; c < 3; c++) {
+      const colScores = [];
+      const digitX = colConfig.x + (colConfig.w / 2) * c;
+
+      for (let r = 0; r < 10; r++) {
+        const digitY = layout.part3.y + dyOffset + (layout.part3.h / 11) * (r + 2);
+        const coords = getPixelCoords(digitX, digitY, adjustments);
+        const score = getBubbleDarkness(ctx, imgData, coords.x, coords.y, bubbleRadius);
+        colScores.push({ digit: r, score, coords });
+      }
+      digitScoresMatrix.push(colScores);
+
+      // Find darkest digit in this column
+      let maxDigitScore = -1;
+      let selectedDigit = -1;
+      for (let r = 0; r < 10; r++) {
+        if (colScores[r].score > maxDigitScore) {
+          maxDigitScore = colScores[r].score;
+          selectedDigit = r;
+        }
+      }
+
+      if (maxDigitScore >= fillThreshold) {
+        digitsResults.push(selectedDigit);
+      } else {
+        digitsResults.push(null); // Missing
+      }
+    }
+    qScores.digits = digitScoresMatrix;
+    p3Scores.push({ question: qIdx + 1, scores: qScores });
+
+    // Build the short answer text representation
+    // We expect 3 columns. E.g. [1, 2, 5] and hasComma = 1 (second digit) -> "12.5"
+    let ansText = "";
+    let validDigits = 0;
+    
+    for (let c = 0; c < 3; c++) {
+      if (digitsResults[c] !== null) {
+        ansText += digitsResults[c].toString();
+        validDigits++;
+      }
+    }
+
+    if (validDigits > 0) {
+      // Reconstruct value
+      let numberStr = "";
+      if (isNegative) numberStr += "-";
+
+      // If a comma was detected, we format the digits
+      // E.g. digits: [1, 2, 5]. If comma is at index 0 (after first digit) -> "1,25" (or 1.25)
+      // If comma is at index 1 (after second digit) -> "12,5"
+      // If no comma, we just output the digit string.
+      // Usually:
+      // - commaIndex = 0 means comma after column 1: e.g. "X,XX"
+      // - commaIndex = 1 means comma after column 2: e.g. "XX,X"
+      const d0 = digitsResults[0] !== null ? digitsResults[0].toString() : "";
+      const d1 = digitsResults[1] !== null ? digitsResults[1].toString() : "";
+      const d2 = digitsResults[2] !== null ? digitsResults[2].toString() : "";
+
+      if (hasComma === 0 && d0 !== "" && (d1 !== "" || d2 !== "")) {
+        numberStr += d0 + "." + d1 + d2;
+      } else if (hasComma === 1 && d0 !== "" && d1 !== "" && d2 !== "") {
+        numberStr += d0 + d1 + "." + d2;
+      } else {
+        // Just contact digits that exist
+        numberStr += d0 + d1 + d2;
+      }
+      p3Results[qIdx] = numberStr;
+    } else {
+      p3Results[qIdx] = "";
+    }
+  }
+  results.part3 = p3Results;
+  results.bubbleScores.part3 = p3Scores;
+
+  return results;
+}

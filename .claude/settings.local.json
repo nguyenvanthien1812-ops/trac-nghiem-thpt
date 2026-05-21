@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Get-ChildItem -Path \"D:\\\\TN\" -Force)",
+      "Bash(Select-Object Name, PSIsContainer)",
+      "Bash(npx vite *)"
+    ]
+  }
+}
