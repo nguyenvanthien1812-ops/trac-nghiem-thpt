@@ -179,7 +179,7 @@ export default function Scanner({
             setAutoCaptureStatus("holding");
             setAutoCaptureProgress(stableFrames);
 
-            if (stableFrames >= 4) { // Require 4 consecutive stable ticks (~1000ms)
+            if (stableFrames >= 3) { // Require 3 consecutive stable ticks (~450ms)
               clearInterval(autoCaptureIntervalRef.current);
               autoCaptureIntervalRef.current = null;
               setAutoCaptureStatus("capturing");
@@ -204,7 +204,7 @@ export default function Scanner({
         setAutoCaptureProgress(0);
         previousCornersRef.current = null;
       }
-    }, 250);
+    }, 150);
 
     return () => {
       if (autoCaptureIntervalRef.current) {
@@ -455,7 +455,7 @@ export default function Scanner({
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                       <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
                     </span>
-                    <span>📸 GIỮ YÊN MÁY... {Math.round((autoCaptureProgress / 4) * 100)}%</span>
+                    <span>📸 GIỮ YÊN MÁY... {Math.round((autoCaptureProgress / 3) * 100)}%</span>
                   </div>
                 ) : (
                   <div className="text-center text-[9px] bg-slate-950/85 border border-slate-800/80 backdrop-blur-sm py-1.5 px-3 rounded-full text-slate-300 font-semibold flex items-center gap-1.5 justify-center transition-all">
@@ -483,7 +483,7 @@ export default function Scanner({
                   <div className="w-36 h-1 bg-slate-950/60 rounded-full overflow-hidden border border-emerald-500/10">
                     <div 
                       className="h-full bg-gradient-to-r from-emerald-500 to-green-400 transition-all duration-200" 
-                      style={{ width: `${(autoCaptureProgress / 4) * 100}%` }}
+                      style={{ width: `${(autoCaptureProgress / 3) * 100}%` }}
                     />
                   </div>
                 )}

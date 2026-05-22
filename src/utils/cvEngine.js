@@ -39,7 +39,7 @@ export function preprocessImage(ctx, width, height) {
 export function findCornerMarkers(imgData, width, height) {
   const data = imgData.data;
   const DARK_THRESH = 95;       // Adaptive brightness threshold for dark pixels
-  const SEARCH = 0.20;          // Search in 20% of the image from each corner to accommodate skew
+  const SEARCH = 0.15;          // Search in 15% of the image from each corner to accommodate skew
 
   // Visited array to keep track of processed pixels across all boxes
   const visited = new Uint8Array(width * height);
@@ -111,7 +111,7 @@ export function findCornerMarkers(imgData, width, height) {
 
     // Scale size limits based on canvas dimensions to support smaller preview canvases
     const scaleFactor = (width / SHEET_WIDTH) * (height / SHEET_HEIGHT);
-    const minCount = Math.max(5, Math.round(18 * scaleFactor));
+    const minCount = Math.max(4, Math.round(8 * scaleFactor));
     const maxCount = Math.max(80, Math.round(400 * scaleFactor));
 
     const candidates = clusters.filter(c => c.count >= minCount && c.count <= maxCount);
