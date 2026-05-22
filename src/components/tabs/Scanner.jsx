@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Camera, X, ArrowLeft, RefreshCw, RotateCcw, RotateCw, Upload, Save, Loader } from "lucide-react";
 import { SHEET_WIDTH, SHEET_HEIGHT } from "../../utils/constants";
 import { scanSheet, preprocessImage, findCornerMarkers, computeAutoCalibration } from "../../utils/cvEngine";
@@ -33,6 +33,124 @@ export default function Scanner({
   const previewCanvasRef = useRef(null);
   const debounceRef = useRef(null);
   const autoGradedRef = useRef(false); // chỉ tự chấm 1 lần sau khi ảnh mới được scan
+
+  const [detectedCorners, setDetectedCorners] = useState({ tl: false, tr: false, bl: false, br: false });
+  const [isAutoCapture, setIsAutoCapture] = useState(true);
+  const autoCaptureIntervalRef = useRef(null);
+
+  const playBeep = () => {
+    try {
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc1 = audioCtx.createOscillator();
+      const osc2 = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+
+      osc1.type = "sine";
+      osc1.frequency.setValueAtTime(1000, audioCtx.currentTime);
+      osc1.frequency.exponentialRampToValueAtTime(1500, audioCtx.currentTime + 0.1);
+      
+      osc2.type = "triangle";
+      osc2.frequency.setValueAtTime(600, audioCtx.currentTime);
+      osc2.frequency.exponentialRampToValueAtTime(900, audioCtx.currentTime + 0.1);
+
+      gainNode.gain.setValueAtTime(0.12, audioCtx.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.12);
+
+      osc1.connect(gainNode);
+      osc2.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+
+      osc1.start();
+      osc2.start();
+      osc1.stop(audioCtx.currentTime + 0.12);
+      osc2.stop(audioCtx.currentTime + 0.12);
+    } catch (err) {
+      console.error("Audio beep failed", err);
+    }
+  };
+
+  useEffect(() => {
+    if (!isLiveCamera || !isAutoCapture) {
+      setDetectedCorners({ tl: false, tr: false, bl: false, br: false });
+      if (autoCaptureIntervalRef.current) {
+        clearInterval(autoCaptureIntervalRef.current);
+        autoCaptureIntervalRef.current = null;
+      }
+      return;
+    }
+
+    const checkCanvas = document.createElement("canvas");
+    checkCanvas.width = 400;
+    checkCanvas.height = Math.round(400 * (SHEET_HEIGHT / SHEET_WIDTH));
+    const checkCtx = checkCanvas.getContext("2d");
+
+    autoCaptureIntervalRef.current = setInterval(() => {
+      if (!videoRef.current) return;
+      const video = videoRef.current;
+      if (video.readyState < 2) return;
+
+      const videoAspect = video.videoWidth / video.videoHeight;
+      const sheetAspect = SHEET_WIDTH / SHEET_HEIGHT;
+      let sx = 0, sy = 0, sw = video.videoWidth, sh = video.videoHeight;
+      if (videoAspect > sheetAspect) {
+        sw = video.videoHeight * sheetAspect;
+        sx = (video.videoWidth - sw) / 2;
+      } else {
+        sh = video.videoWidth / sheetAspect;
+        sy = (video.videoHeight - sh) / 2;
+      }
+
+      checkCtx.drawImage(video, sx, sy, sw, sh, 0, 0, checkCanvas.width, checkCanvas.height);
+      
+      // Auto-contrast stretch
+      preprocessImage(checkCtx, checkCanvas.width, checkCanvas.height);
+
+      const imgData = checkCtx.getImageData(0, 0, checkCanvas.width, checkCanvas.height);
+      
+      // Find corner markers on the smaller canvas
+      const SEARCH = 0.15;
+      const DARK_THRESH = 85;
+      const MIN_PIXELS = 15;
+
+      function centroid(x0, y0, x1, y1) {
+        let sx = 0, sy = 0, n = 0;
+        for (let y = y0; y < y1; y++) {
+          for (let x = x0; x < x1; x++) {
+            const i = (y * imgData.width + x) * 4;
+            const brightness = imgData.data[i] * 0.299 + imgData.data[i + 1] * 0.587 + imgData.data[i + 2] * 0.114;
+            if (brightness < DARK_THRESH) { sx += x; sy += y; n++; }
+          }
+        }
+        return n >= MIN_PIXELS ? { x: sx / n, y: sy / n } : null;
+      }
+
+      const sw_c = Math.floor(checkCanvas.width  * SEARCH);
+      const sh_c = Math.floor(checkCanvas.height * SEARCH);
+
+      const tl = centroid(0,                       0,                        sw_c,              sh_c);
+      const tr = centroid(checkCanvas.width - sw_c, 0,                        checkCanvas.width, sh_c);
+      const bl = centroid(0,                       checkCanvas.height - sh_c, sw_c,              checkCanvas.height);
+      const br = centroid(checkCanvas.width - sw_c, checkCanvas.height - sh_c, checkCanvas.width, checkCanvas.height);
+
+      const detection = { tl: !!tl, tr: !!tr, bl: !!bl, br: !!br };
+      setDetectedCorners(detection);
+
+      if (tl && tr && bl && br) {
+        clearInterval(autoCaptureIntervalRef.current);
+        autoCaptureIntervalRef.current = null;
+        playBeep();
+        onCapturePhoto();
+        showToast("📸 Đã nhận diện đủ 4 góc phiếu & tự động chụp!");
+      }
+    }, 250);
+
+    return () => {
+      if (autoCaptureIntervalRef.current) {
+        clearInterval(autoCaptureIntervalRef.current);
+        autoCaptureIntervalRef.current = null;
+      }
+    };
+  }, [isLiveCamera, isAutoCapture, videoRef, onCapturePhoto, showToast]);
 
   const runScan = useCallback(() => {
     if (!imageSrc) return;
@@ -222,19 +340,31 @@ export default function Scanner({
       {isLiveCamera && (
         <div className="relative rounded-2xl overflow-hidden aspect-[3/4] bg-black border border-slate-800">
           <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
-
+          
           {/* Alignment guide */}
-          <div className="absolute inset-4 border-2 border-dashed border-blue-500/50 rounded-xl pointer-events-none flex flex-col justify-between p-4">
+          <div className="absolute inset-4 border-2 border-dashed border-slate-700/50 rounded-xl pointer-events-none flex flex-col justify-between p-4 bg-slate-950/5">
             <div className="flex justify-between">
-              <div className="w-6 h-6 border-t-2 border-l-2 border-blue-400" />
-              <div className="w-6 h-6 border-t-2 border-r-2 border-blue-400" />
+              <div className={`w-8 h-8 border-t-4 border-l-4 transition-all duration-300 ${detectedCorners.tl ? "border-emerald-400 drop-shadow-[0_0_8px_rgba(16,185,129,0.8)] scale-110" : "border-blue-400"}`} />
+              <div className={`w-8 h-8 border-t-4 border-r-4 transition-all duration-300 ${detectedCorners.tr ? "border-emerald-400 drop-shadow-[0_0_8px_rgba(16,185,129,0.8)] scale-110" : "border-blue-400"}`} />
             </div>
-            <p className="text-center text-[10px] bg-slate-900/80 backdrop-blur-sm py-1 px-3 rounded-full text-blue-300 mx-auto font-semibold">
-              Căn phiếu vừa khít khung nét đứt
-            </p>
+            
+            {isAutoCapture ? (
+              <div className="text-center text-[10px] bg-slate-950/80 backdrop-blur-sm py-1.5 px-3 rounded-full text-slate-300 mx-auto font-semibold flex items-center gap-1.5 justify-center">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                </span>
+                Tự động chụp: Căn khớp 4 góc xanh lá
+              </div>
+            ) : (
+              <p className="text-center text-[10px] bg-slate-900/80 backdrop-blur-sm py-1 px-3 rounded-full text-blue-300 mx-auto font-semibold">
+                Căn phiếu vừa khít khung nét đứt
+              </p>
+            )}
+
             <div className="flex justify-between">
-              <div className="w-6 h-6 border-b-2 border-l-2 border-blue-400" />
-              <div className="w-6 h-6 border-b-2 border-r-2 border-blue-400" />
+              <div className={`w-8 h-8 border-b-4 border-l-4 transition-all duration-300 ${detectedCorners.bl ? "border-emerald-400 drop-shadow-[0_0_8px_rgba(16,185,129,0.8)] scale-110" : "border-blue-400"}`} />
+              <div className={`w-8 h-8 border-b-4 border-r-4 transition-all duration-300 ${detectedCorners.br ? "border-emerald-400 drop-shadow-[0_0_8px_rgba(16,185,129,0.8)] scale-110" : "border-blue-400"}`} />
             </div>
           </div>
 
@@ -246,6 +376,17 @@ export default function Scanner({
               className={`w-10 h-5 rounded-full relative transition-colors ${isBatchMode ? "bg-blue-600" : "bg-slate-700"}`}
             >
               <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${isBatchMode ? "translate-x-5" : "translate-x-0.5"}`} />
+            </button>
+          </div>
+
+          {/* Smart Auto-Capture Toggle */}
+          <div className="absolute top-4 right-4 bg-slate-900/80 backdrop-blur-sm py-2 px-3 rounded-xl border border-slate-700 flex items-center gap-2">
+            <span className="text-[10px] font-bold text-slate-300">Tự động chụp:</span>
+            <button
+              onClick={() => setIsAutoCapture(!isAutoCapture)}
+              className={`w-10 h-5 rounded-full relative transition-colors ${isAutoCapture ? "bg-emerald-600" : "bg-slate-700"}`}
+            >
+              <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${isAutoCapture ? "translate-x-5" : "translate-x-0.5"}`} />
             </button>
           </div>
 
