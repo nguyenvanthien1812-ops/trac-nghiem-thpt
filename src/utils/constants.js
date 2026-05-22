@@ -17,30 +17,30 @@ export const SUBJECT_PRESETS = {
   physics: {
     id: "physics",
     name: "Vật lý",
-    part1Count: 24, // 24 questions (Part 1)
+    part1Count: 18, // 18 questions (Part 1)
     part2Count: 4,  // 4 questions (Part 2)
-    part3Count: 0,  // 0 questions (Part 3)
-    part1Weight: 0.25, // 0.25 pts per question = 6.0 pts
-    part3Weight: 0,
-    // Part 2 is graded using the MoET standard formula: 0.1, 0.25, 0.5, 1.0 (Total: 4.0 pts)
+    part3Count: 6,  // 6 questions (Part 3)
+    part1Weight: 0.25, // 0.25 pts per question = 4.5 pts
+    part3Weight: 0.25, // 0.25 pts per question = 1.5 pts
+    // Part 2: 0.1, 0.25, 0.5, 1.0 (Total: 4.0 pts)
   },
   chemistry: {
     id: "chemistry",
     name: "Hóa học",
-    part1Count: 24,
+    part1Count: 18,
     part2Count: 4,
-    part3Count: 0,
+    part3Count: 6,
     part1Weight: 0.25,
-    part3Weight: 0,
+    part3Weight: 0.25,
   },
   biology: {
     id: "biology",
     name: "Sinh học",
-    part1Count: 24,
+    part1Count: 18,
     part2Count: 4,
-    part3Count: 0,
+    part3Count: 6,
     part1Weight: 0.25,
-    part3Weight: 0,
+    part3Weight: 0.25,
   },
   english: {
     id: "english",
@@ -81,20 +81,20 @@ export const SUBJECT_PRESETS = {
   informatics: {
     id: "informatics",
     name: "Tin học",
-    part1Count: 40,
-    part2Count: 0,
-    part3Count: 0,
+    part1Count: 18,
+    part2Count: 4,
+    part3Count: 6,
     part1Weight: 0.25,
-    part3Weight: 0,
+    part3Weight: 0.25,
   },
   technology: {
     id: "technology",
     name: "Công nghệ",
-    part1Count: 40,
-    part2Count: 0,
-    part3Count: 0,
+    part1Count: 18,
+    part2Count: 4,
+    part3Count: 6,
     part1Weight: 0.25,
-    part3Weight: 0,
+    part3Weight: 0.25,
   },
 };
 
@@ -108,6 +108,51 @@ export const TEMPLATES = {
     part1Count: 40,
     part2Count: 8,
     part3Count: 6,
+    subjectBounded: true,
+    layout: {
+      sbd: { x: 65.5, y: 9.8, w: 13.5, h: 18.0, cols: 6, rows: 10 },
+      code: { x: 82.5, y: 9.8, w: 9.0, h: 18.0, cols: 4, rows: 10 },
+      part1: {
+        y: 35.8, h: 17.5,
+        cols: [
+          { x: 14.8, w: 12.0 },
+          { x: 32.8, w: 12.0 },
+          { x: 50.8, w: 12.0 },
+          { x: 68.8, w: 12.0 }
+        ],
+        rows: 10, options: ["A", "B", "C", "D"]
+      },
+      part2: {
+        y: 56.5, h: 10.0,
+        cols: [
+          { x: 13.6, w: 14.4 },
+          { x: 31.8, w: 14.4 },
+          { x: 49.8, w: 14.4 },
+          { x: 67.8, w: 14.4 }
+        ],
+        rows: 4, options: ["T", "F"]
+      },
+      part3: {
+        y: 72.8, h: 19.0,
+        cols: [
+          { x: 13.5, w: 10.5 },
+          { x: 26.0, w: 10.5 },
+          { x: 38.5, w: 10.5 },
+          { x: 51.0, w: 10.5 },
+          { x: 63.5, w: 10.5 },
+          { x: 76.0, w: 10.5 }
+        ],
+        rows: 10
+      }
+    }
+  },
+  "2026_GRADE10": {
+    id: "2026_GRADE10",
+    name: "Phiếu Tuyển Sinh 10 (40-8-6)",
+    part1Count: 40,
+    part2Count: 8,
+    part3Count: 6,
+    subjectBounded: true,
     layout: {
       sbd: { x: 65.5, y: 9.8, w: 13.5, h: 18.0, cols: 6, rows: 10 },
       code: { x: 82.5, y: 9.8, w: 9.0, h: 18.0, cols: 4, rows: 10 },
@@ -259,5 +304,12 @@ export const SHEET_DOWNLOADS = [
     description: "Phiếu vào lớp 10 TP. Hải Phòng các môn còn lại",
     filename: "Phieu-TLTN-HaiPhong-CacMon.pdf",
     templateId: "80_QUESTIONS",
+  },
+  {
+    id: "ts10-2026",
+    name: "Phiếu Tuyển Sinh Lớp 10 (40-8-6)",
+    description: "Phiếu tuyển sinh lớp 10 THPT năm học 2026 - 2027",
+    filename: "Phieu-TLTN-BGD.pdf",
+    templateId: "2026_GRADE10",
   },
 ];

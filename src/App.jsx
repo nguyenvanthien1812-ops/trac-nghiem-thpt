@@ -600,24 +600,30 @@ export default function App() {
 
     const activeTemplate = TEMPLATES[activeTemplateId];
 
-    // Cảnh báo nếu số câu môn học không khớp với mẫu phiếu
-    if (activeTemplate.part1Count !== preset.part1Count ||
+    // Cảnh báo nếu số câu môn học không khớp với mẫu phiếu (chỉ cảnh báo với mẫu không có cờ subjectBounded)
+    if (!activeTemplate.subjectBounded && (
+        activeTemplate.part1Count !== preset.part1Count ||
         activeTemplate.part2Count !== preset.part2Count ||
-        activeTemplate.part3Count !== preset.part3Count) {
+        activeTemplate.part3Count !== preset.part3Count
+    )) {
       showToast(
         `⚠️ Môn ${preset.name} không khớp mẫu phiếu (${activeTemplate.name}). Điểm có thể sai.`,
         "warning"
       );
     }
 
-    for (let i = 0; i < activeTemplate.part1Count; i++) {
+    const p1Limit = activeTemplate.subjectBounded ? preset.part1Count : activeTemplate.part1Count;
+    const p2Limit = activeTemplate.subjectBounded ? preset.part2Count : activeTemplate.part2Count;
+    const p3Limit = activeTemplate.subjectBounded ? preset.part3Count : activeTemplate.part3Count;
+
+    for (let i = 0; i < p1Limit; i++) {
       const s = result.part1[i] || "", c = keyToUse.part1[i] || "";
       const ok = s !== "" && s !== "MULTIPLE" && s === c;
       if (ok) p1Score += preset.part1Weight;
       p1BD.push({ num: i + 1, student: s, correct: c, isCorrect: ok });
     }
 
-    for (let i = 0; i < activeTemplate.part2Count; i++) {
+    for (let i = 0; i < p2Limit; i++) {
       const sa = result.part2[i] || { a:"",b:"",c:"",d:"" };
       const ca = keyToUse.part2[i]  || { a:"",b:"",c:"",d:"" };
       let cc = 0;
@@ -633,7 +639,7 @@ export default function App() {
       p2BD.push({ num: i + 1, subAnswers: subBD, correctCount: cc, score: qScore });
     }
 
-    for (let i = 0; i < activeTemplate.part3Count; i++) {
+    for (let i = 0; i < p3Limit; i++) {
       const s = result.part3[i] || "", c = keyToUse.part3[i] || "";
       const parse = (v) => v ? parseFloat(v.replace(",", ".")) : null;
       const sn = parse(s), cn = parse(c);

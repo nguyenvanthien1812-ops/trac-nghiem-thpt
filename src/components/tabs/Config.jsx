@@ -5,6 +5,10 @@ export default function Config({ activeExamCode, setActiveExamCode, answerKeys, 
   const [codeError, setCodeError] = useState("");
   const [p3Errors, setP3Errors] = useState({});
 
+  const p1Count = activeTemplate.subjectBounded ? preset.part1Count : activeTemplate.part1Count;
+  const p2Count = activeTemplate.subjectBounded ? preset.part2Count : activeTemplate.part2Count;
+  const p3Count = activeTemplate.subjectBounded ? preset.part3Count : activeTemplate.part3Count;
+
   const validateCode = (val) => {
     if (!val) { setCodeError("Vui lòng nhập mã đề."); return false; }
     if (!/^\d{1,3}$/.test(val)) { setCodeError("Mã đề phải là 1-3 chữ số."); return false; }
@@ -99,11 +103,11 @@ export default function Config({ activeExamCode, setActiveExamCode, answerKeys, 
     if (!currentKey) { showToast("Chưa có đáp án để xuất!", "warning"); return; }
     const rows = [];
     rows.push(["part","question","answer","sub"]);
-    currentKey.part1.forEach((a, i) => rows.push(["I", i + 1, a || "", ""]));
-    currentKey.part2.forEach((q, i) => {
+    currentKey.part1.slice(0, p1Count).forEach((a, i) => rows.push(["I", i + 1, a || "", ""]));
+    currentKey.part2.slice(0, p2Count).forEach((q, i) => {
       ["a","b","c","d"].forEach((sub) => rows.push(["II", i + 1, q?.[sub] || "", sub]));
     });
-    currentKey.part3.forEach((a, i) => rows.push(["III", i + 1, a || "", ""]));
+    currentKey.part3.slice(0, p3Count).forEach((a, i) => rows.push(["III", i + 1, a || "", ""]));
     const csv = rows.map((r) => r.join(",")).join("\n");
     const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
@@ -137,15 +141,15 @@ export default function Config({ activeExamCode, setActiveExamCode, answerKeys, 
           const q = parseInt(qRaw, 10) - 1;
           const ans = (answer || "").toUpperCase();
           if (part === "I" || part === "1") {
-            if (q >= 0 && q < newKey.part1.length) { newKey.part1[q] = ans; importedCount++; }
+            if (q >= 0 && q < p1Count) { newKey.part1[q] = ans; importedCount++; }
           } else if (part === "II" || part === "2") {
             const subKey = (sub || "").toLowerCase();
-            if (q >= 0 && q < newKey.part2.length && ["a","b","c","d"].includes(subKey)) {
+            if (q >= 0 && q < p2Count && ["a","b","c","d"].includes(subKey)) {
               newKey.part2[q][subKey] = ans === "T" || ans === "Đ" || ans === "TRUE" || ans === "ĐÚNG" ? "T" : "F";
               importedCount++;
             }
           } else if (part === "III" || part === "3") {
-            if (q >= 0 && q < newKey.part3.length) { newKey.part3[q] = answer.replace(",", "."); importedCount++; }
+            if (q >= 0 && q < p3Count) { newKey.part3[q] = answer.replace(",", "."); importedCount++; }
           }
         }
         setAnswerKeys((prev) => ({ ...prev, [activeExamCode]: newKey }));
@@ -250,13 +254,13 @@ export default function Config({ activeExamCode, setActiveExamCode, answerKeys, 
       {currentKey && (
         <div className="space-y-6">
           {/* Part I */}
-          {activeTemplate.part1Count > 0 && (
+          {p1Count > 0 && (
             <div className="p-4 rounded-2xl glass-card border border-slate-800 space-y-4">
               <h3 className="font-bold text-xs text-blue-400 border-b border-slate-800 pb-2">
-                PHẦN I: TRẮC NGHIỆM ĐƠN ({activeTemplate.part1Count} câu)
+                PHẦN I: TRẮC NGHIỆM ĐƠN ({p1Count} câu)
               </h3>
               <div className="grid grid-cols-2 gap-x-6 gap-y-3">
-                {Array(activeTemplate.part1Count).fill(0).map((_, idx) => (
+                {Array(p1Count).fill(0).map((_, idx) => (
                   <div key={idx} className="flex justify-between items-center gap-2 text-xs">
                     <span className="text-slate-400 font-medium shrink-0">Câu {idx + 1}:</span>
                     <div className="flex gap-1">
@@ -281,13 +285,13 @@ export default function Config({ activeExamCode, setActiveExamCode, answerKeys, 
           )}
 
           {/* Part II */}
-          {activeTemplate.part2Count > 0 && (
+          {p2Count > 0 && (
             <div className="p-4 rounded-2xl glass-card border border-slate-800 space-y-4">
               <h3 className="font-bold text-xs text-indigo-400 border-b border-slate-800 pb-2">
-                PHẦN II: ĐÚNG/SAI ({activeTemplate.part2Count} câu)
+                PHẦN II: ĐÚNG/SAI ({p2Count} câu)
               </h3>
               <div className="space-y-4">
-                {Array(activeTemplate.part2Count).fill(0).map((_, idx) => (
+                {Array(p2Count).fill(0).map((_, idx) => (
                   <div key={idx} className="space-y-1.5">
                     <span className="text-xs text-slate-300 font-bold">Câu {idx + 1}:</span>
                     <div className="grid grid-cols-4 gap-2">
@@ -325,13 +329,13 @@ export default function Config({ activeExamCode, setActiveExamCode, answerKeys, 
           )}
 
           {/* Part III */}
-          {activeTemplate.part3Count > 0 && (
+          {p3Count > 0 && (
             <div className="p-4 rounded-2xl glass-card border border-slate-800 space-y-4">
               <h3 className="font-bold text-xs text-pink-400 border-b border-slate-800 pb-2">
-                PHẦN III: TRẢ LỜI NGẮN ({activeTemplate.part3Count} câu)
+                PHẦN III: TRẢ LỜI NGẮN ({p3Count} câu)
               </h3>
               <div className="grid grid-cols-2 gap-4">
-                {Array(activeTemplate.part3Count).fill(0).map((_, idx) => (
+                {Array(p3Count).fill(0).map((_, idx) => (
                   <div key={idx} className="space-y-1">
                     <label className="text-[10px] text-slate-500 font-bold block">Câu {idx + 1}:</label>
                     <input
