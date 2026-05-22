@@ -32,34 +32,104 @@ export function preprocessImage(ctx, width, height) {
 
 // ─── Corner Marker Detection ─────────────────────────────────────────────────
 
-// The THPT answer sheet has a ~25×25 px dark square at each of its 4 corners,
-// positioned ~15 px from the page edge.  This function scans each corner region
-// and returns the centroid of the dark cluster, or null if not found.
+// The THPT answer sheet has black corner markers (squares or horizontal dashes) at each of its 4 corners.
+// We use a robust connected-component (flood-fill) detection algorithm to locate candidate clusters 
+// in each corner's 20% search region, and select the candidate closest to the actual physical corner
+// of the image to ignore inner timing marks or background table edges.
 export function findCornerMarkers(imgData, width, height) {
-  const SEARCH = 0.12;          // Search in 12% of the image from each corner
-  const DARK_THRESH = 90;       // Brightness threshold for "dark" pixels
-  const MIN_PIXELS = 40;        // Minimum dark pixel count for a valid marker
+  const data = imgData.data;
+  const DARK_THRESH = 95;       // Adaptive brightness threshold for dark pixels
+  const SEARCH = 0.20;          // Search in 20% of the image from each corner to accommodate skew
 
-  function centroid(x0, y0, x1, y1) {
-    let sx = 0, sy = 0, n = 0;
+  // Visited array to keep track of processed pixels across all boxes
+  const visited = new Uint8Array(width * height);
+
+  function findMarkerInBox(x0, y0, x1, y1, targetX, targetY) {
+    const clusters = [];
+
     for (let y = y0; y < y1; y++) {
       for (let x = x0; x < x1; x++) {
-        const i = (y * width + x) * 4;
-        const brightness = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
-        if (brightness < DARK_THRESH) { sx += x; sy += y; n++; }
+        const idx = y * width + x;
+        if (visited[idx]) continue;
+
+        const pIdx = idx * 4;
+        const brightness = data[pIdx] * 0.299 + data[pIdx + 1] * 0.587 + data[pIdx + 2] * 0.114;
+
+        if (brightness < DARK_THRESH) {
+          // Flood fill cluster using a fast queue BFS
+          const queue = [{ x, y }];
+          visited[idx] = 1;
+          let sx = 0, sy = 0, count = 0;
+          let minX = x, maxX = x, minY = y, maxY = y;
+
+          let qHead = 0;
+          while (qHead < queue.length) {
+            const curr = queue[qHead++];
+            sx += curr.x;
+            sy += curr.y;
+            count++;
+
+            if (curr.x < minX) minX = curr.x;
+            if (curr.x > maxX) maxX = curr.x;
+            if (curr.y < minY) minY = curr.y;
+            if (curr.y > maxY) maxY = curr.y;
+
+            // Check 4-neighbors
+            const neighbors = [
+              { x: curr.x + 1, y: curr.y },
+              { x: curr.x - 1, y: curr.y },
+              { x: curr.x, y: curr.y + 1 },
+              { x: curr.x, y: curr.y - 1 }
+            ];
+
+            for (let i = 0; i < 4; i++) {
+              const n = neighbors[i];
+              if (n.x >= x0 && n.x < x1 && n.y >= y0 && n.y < y1) {
+                const nIdx = n.y * width + n.x;
+                if (!visited[nIdx]) {
+                  visited[nIdx] = 1;
+                  const npIdx = nIdx * 4;
+                  const nBrightness = data[npIdx] * 0.299 + data[npIdx + 1] * 0.587 + data[npIdx + 2] * 0.114;
+                  if (nBrightness < DARK_THRESH) {
+                    queue.push(n);
+                  }
+                }
+              }
+            }
+          }
+
+          clusters.push({
+            cx: sx / count,
+            cy: sy / count,
+            count,
+            width: maxX - minX + 1,
+            height: maxY - minY + 1
+          });
+        }
       }
     }
-    return n >= MIN_PIXELS ? { x: sx / n, y: sy / n } : null;
+
+    // Filter clusters that look like our printed corner marker (usually ~40-80 pixels in size)
+    const candidates = clusters.filter(c => c.count >= 20 && c.count <= 400);
+    if (candidates.length === 0) return null;
+
+    // Sort by proximity to the target physical corner of the image
+    candidates.sort((a, b) => {
+      const distA = (a.cx - targetX) ** 2 + (a.cy - targetY) ** 2;
+      const distB = (b.cx - targetX) ** 2 + (b.cy - targetY) ** 2;
+      return distA - distB;
+    });
+
+    return { x: candidates[0].cx, y: candidates[0].cy };
   }
 
-  const data = imgData.data;
-  const sw = Math.floor(width  * SEARCH);
+  const sw = Math.floor(width * SEARCH);
   const sh = Math.floor(height * SEARCH);
 
-  const tl = centroid(0,         0,          sw,    sh);
-  const tr = centroid(width - sw, 0,          width, sh);
-  const bl = centroid(0,         height - sh, sw,    height);
-  const br = centroid(width - sw, height - sh, width, height);
+  const tl = findMarkerInBox(0,          0,           sw,    sh,     0,     0);
+  const tr = findMarkerInBox(width - sw, 0,           width, sh,     width, 0);
+  const bl = findMarkerInBox(0,          height - sh, sw,    height, 0,     height);
+  const br = findMarkerInBox(width - sw, height - sh, width, height, width, height);
 
   return (tl && tr && bl && br) ? { tl, tr, bl, br } : null;
 }

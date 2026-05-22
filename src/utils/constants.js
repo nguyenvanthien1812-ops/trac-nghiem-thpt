@@ -155,7 +155,7 @@ export const TEMPLATES = {
     subjectBounded: true,
     layout: {
       sbd: { x: 65.5, y: 9.8, w: 13.5, h: 18.0, cols: 6, rows: 10 },
-      code: { x: 82.5, y: 9.8, w: 9.0, h: 18.0, cols: 4, rows: 10 },
+      code: { x: 84.5, y: 9.8, w: 6.0, h: 18.0, cols: 3, rows: 10 },
       part1: {
         y: 35.8, h: 17.5,
         cols: [
