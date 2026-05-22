@@ -112,9 +112,16 @@ export function findCornerMarkers(imgData, width, height) {
     // Scale size limits based on canvas dimensions to support smaller preview canvases
     const scaleFactor = (width / SHEET_WIDTH) * (height / SHEET_HEIGHT);
     const minCount = Math.max(4, Math.round(8 * scaleFactor));
-    const maxCount = Math.max(80, Math.round(400 * scaleFactor));
+    // maxCount raised to 4000: real phone photos scaled to 800×1130 produce corner marks
+    // of ~38×38 ≈ 1444px; the old limit of 400 filtered them all out.
+    const maxCount = Math.max(80, Math.round(4000 * scaleFactor));
 
-    const candidates = clusters.filter(c => c.count >= minCount && c.count <= maxCount);
+    const candidates = clusters.filter(c => {
+      if (c.count < minCount || c.count > maxCount) return false;
+      // Corner markers are roughly square; reject very elongated blobs (text lines, borders)
+      const ar = c.width / c.height;
+      return ar >= 0.2 && ar <= 5;
+    });
     if (candidates.length === 0) return null;
 
     // Sort by proximity to the target physical corner of the image
