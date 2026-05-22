@@ -44,6 +44,7 @@ export default function Scanner({
 
   const [autoCaptureStatus, setAutoCaptureStatus] = useState("searching"); // "searching" | "holding" | "capturing"
   const [autoCaptureProgress, setAutoCaptureProgress] = useState(0); // 0 to 4
+  const [alignmentWarning, setAlignmentWarning] = useState(null); // null | "flipped" | "too_far" | "tilted" | "not_straight"
   const previousCornersRef = useRef(null);
 
   const playBeep = () => {
@@ -83,6 +84,7 @@ export default function Scanner({
       setDetectedCorners({ tl: false, tr: false, bl: false, br: false });
       setAutoCaptureStatus("searching");
       setAutoCaptureProgress(0);
+      setAlignmentWarning(null);
       previousCornersRef.current = null;
       if (autoCaptureIntervalRef.current) {
         clearInterval(autoCaptureIntervalRef.current);
@@ -159,6 +161,7 @@ export default function Scanner({
         const isWellAligned = validOrientation && validSize && validAspect && validAlignment;
 
         if (isWellAligned) {
+          setAlignmentWarning(null);
           // 2. Coordinate stability check (hand-shake check)
           let isSteady = true;
           if (previousCornersRef.current) {
@@ -196,12 +199,23 @@ export default function Scanner({
           stableFrames = 0;
           setAutoCaptureStatus("searching"); // Not upright or too far/small
           setAutoCaptureProgress(0);
+
+          if (!validOrientation) {
+            setAlignmentWarning("flipped");
+          } else if (!validSize) {
+            setAlignmentWarning("too_far");
+          } else if (!validAlignment) {
+            setAlignmentWarning("tilted");
+          } else if (!validAspect) {
+            setAlignmentWarning("not_straight");
+          }
         }
         previousCornersRef.current = corners;
       } else {
         stableFrames = 0;
         setAutoCaptureStatus("searching");
         setAutoCaptureProgress(0);
+        setAlignmentWarning(null);
         previousCornersRef.current = null;
       }
     }, 150);
@@ -440,6 +454,8 @@ export default function Scanner({
               ? "border-emerald-400/90 bg-emerald-500/5 shadow-[inset_0_0_30px_rgba(16,185,129,0.25)] animate-pulse"
               : autoCaptureStatus === "capturing"
               ? "border-white bg-white/10"
+              : alignmentWarning
+              ? "border-amber-500/80 bg-amber-500/5 shadow-[inset_0_0_20px_rgba(245,158,11,0.15)] animate-pulse"
               : "border-slate-700/50 bg-slate-950/5"
           }`}>
             <div className="flex justify-between">
@@ -458,24 +474,35 @@ export default function Scanner({
                     <span>📸 GIỮ YÊN MÁY... {Math.round((autoCaptureProgress / 3) * 100)}%</span>
                   </div>
                 ) : (
-                  <div className="text-center text-[9px] bg-slate-950/85 border border-slate-800/80 backdrop-blur-sm py-1.5 px-3 rounded-full text-slate-300 font-semibold flex items-center gap-1.5 justify-center transition-all">
-                    {Object.values(detectedCorners).filter(Boolean).length < 4 ? (
-                      <>
-                        <span className="relative flex h-1.5 w-1.5">
-                          <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-blue-400"></span>
-                        </span>
-                        <span>Căn 4 góc phiếu vào khung nét đứt ({Object.values(detectedCorners).filter(Boolean).length}/4)</span>
-                      </>
-                    ) : (
-                      <>
-                        <span className="relative flex h-1.5 w-1.5">
-                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                          <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-amber-500"></span>
-                        </span>
-                        <span>Đang cân chỉnh thẳng góc...</span>
-                      </>
-                    )}
-                  </div>
+                  Object.values(detectedCorners).filter(Boolean).length < 4 ? (
+                    <div className="text-center text-[9px] bg-slate-950/85 border border-slate-800/80 backdrop-blur-sm py-1.5 px-3 rounded-full text-slate-300 font-semibold flex items-center gap-1.5 justify-center transition-all">
+                      <span className="relative flex h-1.5 w-1.5">
+                        <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-blue-400"></span>
+                      </span>
+                      <span>Căn 4 góc phiếu vào khung nét đứt ({Object.values(detectedCorners).filter(Boolean).length}/4)</span>
+                    </div>
+                  ) : alignmentWarning ? (
+                    <div className="text-center text-[9px] bg-amber-950/90 border border-amber-500/40 backdrop-blur-sm py-1.5 px-3 rounded-full text-amber-300 font-bold flex items-center gap-1.5 justify-center transition-all shadow-md shadow-amber-950/40">
+                      <span className="relative flex h-1.5 w-1.5">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-amber-500"></span>
+                      </span>
+                      <span>
+                        {alignmentWarning === "flipped" && "⚠️ Vui lòng xoay đúng chiều phiếu"}
+                        {alignmentWarning === "too_far" && "⚠️ Di chuyển camera lại gần phiếu hơn"}
+                        {alignmentWarning === "tilted" && "⚠️ Tránh nghiêng máy (giữ song song)"}
+                        {alignmentWarning === "not_straight" && "⚠️ Giữ thẳng khung hình (tránh xoay xéo)"}
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="text-center text-[9px] bg-amber-950/85 border border-amber-600/30 backdrop-blur-sm py-1.5 px-3 rounded-full text-amber-300 font-semibold flex items-center gap-1.5 justify-center transition-all">
+                      <span className="relative flex h-1.5 w-1.5">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-amber-500"></span>
+                      </span>
+                      <span>Đang cân chỉnh thẳng góc...</span>
+                    </div>
+                  )
                 )}
 
                 {/* Progress bar */}

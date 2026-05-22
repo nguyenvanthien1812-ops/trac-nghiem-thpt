@@ -239,9 +239,10 @@ export function getBubbleDarkness(ctx, imgData, x, y, r = 7) {
   const avgInside = insideCount > 0 ? insideSum / insideCount : 255;
   const avgOutside = outsideCount > 0 ? outsideSum / outsideCount : 255;
 
-  // A filled bubble is darker than its background, meaning avgInside < avgOutside.
-  // We return the difference. Higher score = darker/more filled.
-  return Math.max(0, avgOutside - avgInside);
+  // Weber Contrast: relative difference between background paper (outside) and inside bubble.
+  // This is highly invariant to ambient lighting changes, shadows, and low-light.
+  const contrast = avgOutside > 0 ? (avgOutside - avgInside) / avgOutside : 0;
+  return Math.max(0, Math.round(contrast * 100));
 }
 
 // Map percentage coordinates (0 to 100) to actual pixel coordinates on the 800x1130 canvas,
@@ -357,7 +358,7 @@ export function scanSheet(ctx, layout, adjustments, template) {
   };
 
   const bubbleRadius = 6.5;
-  const fillThreshold = 25; // Minimum darkness difference to count as filled
+  const fillThreshold = 18; // Minimum relative contrast (18%) to count as filled
 
   // Helper to scan a standard matrix grid (like SBD, Exam Code)
   function scanGrid(gridConfig) {
@@ -443,8 +444,8 @@ export function scanSheet(ctx, layout, adjustments, template) {
       else if (s > secondScore) secondScore = s;
     }
 
-    // Adaptive: light marks (score 15–24) still selected if clearly dominant over others
-    const lightMarkSelected = maxScore >= 15 && maxScore < fillThreshold && maxScore >= secondScore * 1.6;
+    // Adaptive: light marks (score 10–17) still selected if clearly dominant over others
+    const lightMarkSelected = maxScore >= 10 && maxScore < fillThreshold && maxScore >= secondScore * 1.6;
 
     if (filledCount > 1) {
       p1Results[qIdx] = "MULTIPLE";
