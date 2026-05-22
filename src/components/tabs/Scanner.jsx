@@ -42,6 +42,10 @@ export default function Scanner({
   useEffect(() => { isMutedRef.current = isMuted; }, [isMuted]);
   const [perspStatus, setPerspStatus] = useState(null); // null | "ok" | "manual"
 
+  const [autoCaptureStatus, setAutoCaptureStatus] = useState("searching"); // "searching" | "holding" | "capturing"
+  const [autoCaptureProgress, setAutoCaptureProgress] = useState(0); // 0 to 4
+  const previousCornersRef = useRef(null);
+
   const playBeep = () => {
     if (isMutedRef.current) return;
     try {
@@ -77,6 +81,9 @@ export default function Scanner({
   useEffect(() => {
     if (!isLiveCamera || !isAutoCapture) {
       setDetectedCorners({ tl: false, tr: false, bl: false, br: false });
+      setAutoCaptureStatus("searching");
+      setAutoCaptureProgress(0);
+      previousCornersRef.current = null;
       if (autoCaptureIntervalRef.current) {
         clearInterval(autoCaptureIntervalRef.current);
         autoCaptureIntervalRef.current = null;
@@ -88,6 +95,8 @@ export default function Scanner({
     checkCanvas.width = 400;
     checkCanvas.height = Math.round(400 * (SHEET_HEIGHT / SHEET_WIDTH));
     const checkCtx = checkCanvas.getContext("2d");
+
+    let stableFrames = 0; // Tracks consecutive stable frames with steady alignment
 
     autoCaptureIntervalRef.current = setInterval(() => {
       if (!videoRef.current) return;
@@ -112,40 +121,88 @@ export default function Scanner({
 
       const imgData = checkCtx.getImageData(0, 0, checkCanvas.width, checkCanvas.height);
       
-      // Find corner markers on the smaller canvas
-      const SEARCH = 0.15;
-      const DARK_THRESH = 85;
-      const MIN_PIXELS = 15;
+      // Find corner markers using the robust BFS connected-component detector
+      const corners = findCornerMarkers(imgData, checkCanvas.width, checkCanvas.height);
 
-      function centroid(x0, y0, x1, y1) {
-        let sx = 0, sy = 0, n = 0;
-        for (let y = y0; y < y1; y++) {
-          for (let x = x0; x < x1; x++) {
-            const i = (y * imgData.width + x) * 4;
-            const brightness = imgData.data[i] * 0.299 + imgData.data[i + 1] * 0.587 + imgData.data[i + 2] * 0.114;
-            if (brightness < DARK_THRESH) { sx += x; sy += y; n++; }
-          }
-        }
-        return n >= MIN_PIXELS ? { x: sx / n, y: sy / n } : null;
-      }
-
-      const sw_c = Math.floor(checkCanvas.width  * SEARCH);
-      const sh_c = Math.floor(checkCanvas.height * SEARCH);
-
-      const tl = centroid(0,                       0,                        sw_c,              sh_c);
-      const tr = centroid(checkCanvas.width - sw_c, 0,                        checkCanvas.width, sh_c);
-      const bl = centroid(0,                       checkCanvas.height - sh_c, sw_c,              checkCanvas.height);
-      const br = centroid(checkCanvas.width - sw_c, checkCanvas.height - sh_c, checkCanvas.width, checkCanvas.height);
-
-      const detection = { tl: !!tl, tr: !!tr, bl: !!bl, br: !!br };
+      const detection = {
+        tl: !!(corners && corners.tl),
+        tr: !!(corners && corners.tr),
+        bl: !!(corners && corners.bl),
+        br: !!(corners && corners.br)
+      };
       setDetectedCorners(detection);
 
-      if (tl && tr && bl && br) {
-        clearInterval(autoCaptureIntervalRef.current);
-        autoCaptureIntervalRef.current = null;
-        playBeep();
-        onCapturePhoto();
-        showToast("📸 Đã nhận diện đủ 4 góc phiếu & tự động chụp!");
+      if (corners && corners.tl && corners.tr && corners.bl && corners.br) {
+        // 1. Geometrical/alignment sanity checks ("ngay ngắn" check)
+        const { tl, tr, bl, br } = corners;
+        const wTop = tr.x - tl.x;
+        const wBot = br.x - bl.x;
+        const hLeft = bl.y - tl.y;
+        const hRight = br.y - tr.y;
+
+        const wAvg = (wTop + wBot) / 2;
+        const hAvg = (hLeft + hRight) / 2;
+        const aspect = wAvg / hAvg;
+
+        const validOrientation = 
+          tl.x < tr.x && bl.x < br.x &&
+          tl.y < bl.y && tr.y < br.y;
+
+        const validSize = wAvg > 180 && hAvg > 250; // Ensure sheet is close enough
+        const validAspect = aspect > 0.58 && aspect < 0.85; // Normal sheet aspect ratio
+        const validAlignment = 
+          Math.abs(tl.x - bl.x) < 50 && // upright sides not too tilted
+          Math.abs(tr.x - br.x) < 50 &&
+          Math.abs(tl.y - tr.y) < 40 && // horizontal sides not too tilted
+          Math.abs(bl.y - br.y) < 40;
+
+        const isWellAligned = validOrientation && validSize && validAspect && validAlignment;
+
+        if (isWellAligned) {
+          // 2. Coordinate stability check (hand-shake check)
+          let isSteady = true;
+          if (previousCornersRef.current) {
+            const prev = previousCornersRef.current;
+            const tlDist = Math.hypot(tl.x - prev.tl.x, tl.y - prev.tl.y);
+            const trDist = Math.hypot(tr.x - prev.tr.x, tr.y - prev.tr.y);
+            const blDist = Math.hypot(bl.x - prev.bl.x, bl.y - prev.bl.y);
+            const brDist = Math.hypot(br.x - prev.br.x, br.y - prev.br.y);
+            
+            // Tolerance is 7 pixels on 400px canvas (approx 1.7% change)
+            if (tlDist > 7 || trDist > 7 || blDist > 7 || brDist > 7) {
+              isSteady = false;
+            }
+          }
+
+          if (isSteady) {
+            stableFrames++;
+            setAutoCaptureStatus("holding");
+            setAutoCaptureProgress(stableFrames);
+
+            if (stableFrames >= 4) { // Require 4 consecutive stable ticks (~1000ms)
+              clearInterval(autoCaptureIntervalRef.current);
+              autoCaptureIntervalRef.current = null;
+              setAutoCaptureStatus("capturing");
+              playBeep();
+              onCapturePhoto();
+              showToast("📸 Đã định vị ổn định & tự động chụp!");
+            }
+          } else {
+            stableFrames = 0;
+            setAutoCaptureStatus("holding"); // Still trying to align steady
+            setAutoCaptureProgress(0);
+          }
+        } else {
+          stableFrames = 0;
+          setAutoCaptureStatus("searching"); // Not upright or too far/small
+          setAutoCaptureProgress(0);
+        }
+        previousCornersRef.current = corners;
+      } else {
+        stableFrames = 0;
+        setAutoCaptureStatus("searching");
+        setAutoCaptureProgress(0);
+        previousCornersRef.current = null;
       }
     }, 250);
 
@@ -372,20 +429,64 @@ export default function Scanner({
         <div className="relative rounded-2xl overflow-hidden aspect-[3/4] bg-black border border-slate-800">
           <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
           
+          {/* Shutter flash animation overlay */}
+          {autoCaptureStatus === "capturing" && (
+            <div className="absolute inset-0 bg-white/95 animate-out fade-out duration-300 pointer-events-none z-10" />
+          )}
+
           {/* Alignment guide */}
-          <div className="absolute inset-4 border-2 border-dashed border-slate-700/50 rounded-xl pointer-events-none flex flex-col justify-between p-4 bg-slate-950/5">
+          <div className={`absolute inset-4 border-2 border-dashed rounded-xl pointer-events-none flex flex-col justify-between p-4 transition-all duration-300 ${
+            autoCaptureStatus === "holding"
+              ? "border-emerald-400/90 bg-emerald-500/5 shadow-[inset_0_0_30px_rgba(16,185,129,0.25)] animate-pulse"
+              : autoCaptureStatus === "capturing"
+              ? "border-white bg-white/10"
+              : "border-slate-700/50 bg-slate-950/5"
+          }`}>
             <div className="flex justify-between">
               <div className={`w-8 h-8 border-t-4 border-l-4 transition-all duration-300 ${detectedCorners.tl ? "border-emerald-400 drop-shadow-[0_0_8px_rgba(16,185,129,0.8)] scale-110" : "border-blue-400"}`} />
               <div className={`w-8 h-8 border-t-4 border-r-4 transition-all duration-300 ${detectedCorners.tr ? "border-emerald-400 drop-shadow-[0_0_8px_rgba(16,185,129,0.8)] scale-110" : "border-blue-400"}`} />
             </div>
             
             {isAutoCapture ? (
-              <div className="text-center text-[10px] bg-slate-950/80 backdrop-blur-sm py-1.5 px-3 rounded-full text-slate-300 mx-auto font-semibold flex items-center gap-1.5 justify-center">
-                <span className="relative flex h-2 w-2">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                </span>
-                Tự động chụp: Căn khớp 4 góc xanh lá
+              <div className="flex flex-col gap-2 items-center mx-auto pointer-events-none">
+                {autoCaptureStatus === "holding" ? (
+                  <div className="text-center text-[10px] bg-emerald-950/95 border border-emerald-500/30 backdrop-blur-md py-1.5 px-3 rounded-full text-emerald-300 font-bold flex items-center gap-1.5 justify-center shadow-lg shadow-emerald-950/50 scale-105 transition-all">
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                    </span>
+                    <span>📸 GIỮ YÊN MÁY... {Math.round((autoCaptureProgress / 4) * 100)}%</span>
+                  </div>
+                ) : (
+                  <div className="text-center text-[9px] bg-slate-950/85 border border-slate-800/80 backdrop-blur-sm py-1.5 px-3 rounded-full text-slate-300 font-semibold flex items-center gap-1.5 justify-center transition-all">
+                    {Object.values(detectedCorners).filter(Boolean).length < 4 ? (
+                      <>
+                        <span className="relative flex h-1.5 w-1.5">
+                          <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-blue-400"></span>
+                        </span>
+                        <span>Căn 4 góc phiếu vào khung nét đứt ({Object.values(detectedCorners).filter(Boolean).length}/4)</span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="relative flex h-1.5 w-1.5">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-amber-500"></span>
+                        </span>
+                        <span>Đang cân chỉnh thẳng góc...</span>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {/* Progress bar */}
+                {autoCaptureStatus === "holding" && (
+                  <div className="w-36 h-1 bg-slate-950/60 rounded-full overflow-hidden border border-emerald-500/10">
+                    <div 
+                      className="h-full bg-gradient-to-r from-emerald-500 to-green-400 transition-all duration-200" 
+                      style={{ width: `${(autoCaptureProgress / 4) * 100}%` }}
+                    />
+                  </div>
+                )}
               </div>
             ) : (
               <p className="text-center text-[10px] bg-slate-900/80 backdrop-blur-sm py-1 px-3 rounded-full text-blue-300 mx-auto font-semibold">

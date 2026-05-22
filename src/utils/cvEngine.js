@@ -109,8 +109,12 @@ export function findCornerMarkers(imgData, width, height) {
       }
     }
 
-    // Filter clusters that look like our printed corner marker (usually ~40-80 pixels in size)
-    const candidates = clusters.filter(c => c.count >= 20 && c.count <= 400);
+    // Scale size limits based on canvas dimensions to support smaller preview canvases
+    const scaleFactor = (width / SHEET_WIDTH) * (height / SHEET_HEIGHT);
+    const minCount = Math.max(5, Math.round(18 * scaleFactor));
+    const maxCount = Math.max(80, Math.round(400 * scaleFactor));
+
+    const candidates = clusters.filter(c => c.count >= minCount && c.count <= maxCount);
     if (candidates.length === 0) return null;
 
     // Sort by proximity to the target physical corner of the image
