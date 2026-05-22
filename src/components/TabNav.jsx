@@ -11,7 +11,10 @@ const TABS = [
 
 export default function TabNav({ activeTab, onTabChange }) {
   return (
-    <footer className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md bg-slate-900/90 backdrop-blur-md border-t border-slate-800 py-2.5 px-6 flex justify-between items-center z-40">
+    <footer
+      className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md bg-slate-900/90 backdrop-blur-md border-t border-slate-800 px-6 flex justify-between items-center z-40"
+      style={{ paddingTop: "10px", paddingBottom: "max(10px, env(safe-area-inset-bottom))" }}
+    >
       {TABS.map(({ id, icon: Icon, label }) => (
         <button
           key={id}

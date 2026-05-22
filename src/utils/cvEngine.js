@@ -186,6 +186,84 @@ export function getPixelCoords(pctX, pctY, config) {
   return { x: pixelX, y: pixelY };
 }
 
+// ─── Perspective Correction ───────────────────────────────────────────────────
+
+// Solve 8×8 linear system Ax = b by Gaussian elimination with partial pivoting
+function solveLinear8(A, b) {
+  const n = 8;
+  const M = A.map((row, i) => [...row, b[i]]);
+  for (let col = 0; col < n; col++) {
+    let maxRow = col;
+    for (let row = col + 1; row < n; row++)
+      if (Math.abs(M[row][col]) > Math.abs(M[maxRow][col])) maxRow = row;
+    [M[col], M[maxRow]] = [M[maxRow], M[col]];
+    if (Math.abs(M[col][col]) < 1e-10) return null;
+    for (let row = col + 1; row < n; row++) {
+      const f = M[row][col] / M[col][col];
+      for (let k = col; k <= n; k++) M[row][k] -= f * M[col][k];
+    }
+  }
+  const x = new Array(n).fill(0);
+  for (let i = n - 1; i >= 0; i--) {
+    x[i] = M[i][n];
+    for (let j = i + 1; j < n; j++) x[i] -= M[i][j] * x[j];
+    x[i] /= M[i][i];
+  }
+  return x;
+}
+
+// Compute 3×3 homography H mapping srcPts[i] → dstPts[i] (homogeneous coords)
+export function computeHomography(srcPts, dstPts) {
+  const A = [], b = [];
+  for (let i = 0; i < 4; i++) {
+    const { x: sx, y: sy } = srcPts[i];
+    const { x: dx, y: dy } = dstPts[i];
+    A.push([sx, sy, 1, 0, 0, 0, -sx * dx, -sy * dx]);
+    b.push(dx);
+    A.push([0, 0, 0, sx, sy, 1, -sx * dy, -sy * dy]);
+    b.push(dy);
+  }
+  const h = solveLinear8(A, b);
+  if (!h) return null;
+  return [[h[0], h[1], h[2]], [h[3], h[4], h[5]], [h[6], h[7], 1]];
+}
+
+// Backward-warp srcImageData into dstCtx using H (maps dst coords → src coords).
+// Bilinear interpolation for sub-pixel accuracy.
+export function warpPerspective(srcImageData, dstCtx, H, dstWidth, dstHeight) {
+  const sd = srcImageData.data;
+  const sw = srcImageData.width;
+  const sh = srcImageData.height;
+  const out = dstCtx.createImageData(dstWidth, dstHeight);
+  const od = out.data;
+
+  for (let dy = 0; dy < dstHeight; dy++) {
+    for (let dx = 0; dx < dstWidth; dx++) {
+      const w  = H[2][0] * dx + H[2][1] * dy + H[2][2];
+      const sx = (H[0][0] * dx + H[0][1] * dy + H[0][2]) / w;
+      const sy = (H[1][0] * dx + H[1][1] * dy + H[1][2]) / w;
+      const x0 = Math.floor(sx), y0 = Math.floor(sy);
+      const x1 = x0 + 1, y1 = y0 + 1;
+      const oi = (dy * dstWidth + dx) * 4;
+      if (x0 < 0 || y0 < 0 || x1 >= sw || y1 >= sh) {
+        od[oi] = od[oi + 1] = od[oi + 2] = 255; od[oi + 3] = 255;
+        continue;
+      }
+      const fx = sx - x0, fy = sy - y0;
+      const i00 = (y0 * sw + x0) * 4, i10 = (y0 * sw + x1) * 4;
+      const i01 = (y1 * sw + x0) * 4, i11 = (y1 * sw + x1) * 4;
+      for (let c = 0; c < 3; c++) {
+        od[oi + c] = Math.round(
+          sd[i00 + c] * (1 - fx) * (1 - fy) + sd[i10 + c] * fx * (1 - fy) +
+          sd[i01 + c] * (1 - fx) * fy       + sd[i11 + c] * fx * fy
+        );
+      }
+      od[oi + 3] = 255;
+    }
+  }
+  dstCtx.putImageData(out, 0, 0);
+}
+
 // Scans the entire sheet using the layout config and manual adjustments
 export function scanSheet(ctx, layout, adjustments, template) {
   const imgData = ctx.getImageData(0, 0, SHEET_WIDTH, SHEET_HEIGHT);
@@ -280,26 +358,26 @@ export function scanSheet(ctx, layout, adjustments, template) {
 
     // Determine filled bubbles
     let maxScore = -1;
+    let secondScore = -1;
     let selectedOpt = "";
     let filledCount = 0;
 
     for (let optIdx = 0; optIdx < 4; optIdx++) {
-      if (qScores[optIdx].score >= fillThreshold) {
-        filledCount++;
-      }
-      if (qScores[optIdx].score > maxScore) {
-        maxScore = qScores[optIdx].score;
-        selectedOpt = qScores[optIdx].option;
-      }
+      const s = qScores[optIdx].score;
+      if (s >= fillThreshold) filledCount++;
+      if (s > maxScore) { secondScore = maxScore; maxScore = s; selectedOpt = qScores[optIdx].option; }
+      else if (s > secondScore) secondScore = s;
     }
 
-    // If multiple options filled, or none filled, or max score is low, mark as empty
+    // Adaptive: light marks (score 15–24) still selected if clearly dominant over others
+    const lightMarkSelected = maxScore >= 15 && maxScore < fillThreshold && maxScore >= secondScore * 1.6;
+
     if (filledCount > 1) {
       p1Results[qIdx] = "MULTIPLE";
-    } else if (maxScore >= fillThreshold) {
+    } else if (maxScore >= fillThreshold || lightMarkSelected) {
       p1Results[qIdx] = selectedOpt;
     } else {
-      p1Results[qIdx] = ""; // Blank
+      p1Results[qIdx] = "";
     }
   }
   results.part1 = p1Results;

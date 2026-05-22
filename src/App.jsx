@@ -363,9 +363,13 @@ export default function App() {
     const mockCode = "101";
     const activeTemplate = TEMPLATES[activeTemplateId];
 
-    // Sinh đáp án demo đủ số câu cho mỗi phần theo template đang chọn
+    // Dùng cùng logic giới hạn số câu như gradeSheet
+    const demoP1 = activeTemplate.subjectBounded ? preset.part1Count : activeTemplate.part1Count;
+    const demoP2 = activeTemplate.subjectBounded ? preset.part2Count : activeTemplate.part2Count;
+    const demoP3 = activeTemplate.subjectBounded ? preset.part3Count : activeTemplate.part3Count;
+
     const p1Opts = ["A", "B", "C", "D"];
-    const targetP1 = Array.from({ length: activeTemplate.part1Count }, (_, i) => p1Opts[i % 4]);
+    const targetP1 = Array.from({ length: demoP1 }, (_, i) => p1Opts[i % 4]);
 
     const p2Pattern = [
       { a:"T", b:"F", c:"T", d:"F" },
@@ -373,11 +377,11 @@ export default function App() {
       { a:"T", b:"T", c:"F", d:"F" },
       { a:"F", b:"F", c:"T", d:"T" },
     ];
-    const targetP2 = Array.from({ length: activeTemplate.part2Count }, (_, i) => ({ ...p2Pattern[i % 4] }));
+    const targetP2 = Array.from({ length: demoP2 }, (_, i) => ({ ...p2Pattern[i % 4] }));
 
     const p3Samples = ["1.5", "-2.5", "100", "0.75", "-50", "3.5", "8", "25", "0.5", "-7",
                        "12", "4.5", "-3", "50", "9", "6.5"];
-    const targetP3 = Array.from({ length: activeTemplate.part3Count }, (_, i) => p3Samples[i % p3Samples.length]);
+    const targetP3 = Array.from({ length: demoP3 }, (_, i) => p3Samples[i % p3Samples.length]);
 
     // Cập nhật đáp án mã đề "101" khớp với dữ liệu demo để chấm đúng
     setAnswerKeys((prev) => ({
@@ -520,7 +524,7 @@ export default function App() {
     setActiveTab("scanner");
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } },
+        video: { facingMode: "environment", width: { ideal: 3840 }, height: { ideal: 2160 } },
       });
       setCameraStream(stream);
       if (videoRef.current) videoRef.current.srcObject = stream;
@@ -594,6 +598,15 @@ export default function App() {
     }
     const keyToUse = key || Object.values(answerKeys)[0];
     if (!keyToUse) return;
+
+    // Cảnh báo nếu đáp án toàn trống (chưa nhập)
+    const hasAnyAnswer =
+      keyToUse.part1?.some(a => a !== "") ||
+      keyToUse.part2?.some(q => q && ["a","b","c","d"].some(s => q[s] !== "")) ||
+      keyToUse.part3?.some(a => a !== "");
+    if (!hasAnyAnswer) {
+      showToast(`Đáp án mã đề ${keyToUse === key ? result.code : "đang dùng"} toàn bộ còn trống! Hãy nhập đáp án trong tab "Đáp án đề".`, "warning");
+    }
 
     let p1Score = 0, p2Score = 0, p3Score = 0;
     const p1BD = [], p2BD = [], p3BD = [];
@@ -672,7 +685,7 @@ export default function App() {
       });
       showToast(`Chấm xong! SBD: ${summary.sbd || "?"} — Điểm: ${total.toFixed(2)}`);
       setImageSrc(null); setScanResult(null);
-      setTimeout(startCamera, 1500);
+      setTimeout(() => { startCamera().catch(() => showToast("Không thể mở lại camera!", "error")); }, 800);
     } else {
       setGradingResult(summary);
       setTempStudentName("");
@@ -752,13 +765,62 @@ export default function App() {
 
   const exportHistoryToCSV = () => {
     if (historyList.length === 0) { showToast("Lịch sử trống!", "error"); return; }
-    let csv = "﻿STT,Thời gian,Họ và tên,Môn thi,Số báo danh,Mã đề,Điểm số\n";
-    historyList.forEach((item, i) => {
-      csv += `${i + 1},"${item.gradedAt}","${item.studentName}","${item.subjectName}","${item.sbd}","${item.examCode}",${item.totalScore}\n`;
+
+    // Build dynamic column headers based on max question counts
+    let maxP1 = 0, maxP2 = 0, maxP3 = 0;
+    historyList.forEach(item => {
+      if ((item.breakdown?.part1?.length || 0) > maxP1) maxP1 = item.breakdown.part1.length;
+      if ((item.breakdown?.part2?.length || 0) > maxP2) maxP2 = item.breakdown.part2.length;
+      if ((item.breakdown?.part3?.length || 0) > maxP3) maxP3 = item.breakdown.part3.length;
     });
+
+    const p1Headers = Array.from({ length: maxP1 }, (_, i) => `P1_C${i + 1}`);
+    const p2Headers = Array.from({ length: maxP2 }, (_, i) => ["a", "b", "c", "d"].map(s => `P2_C${i + 1}${s}`)).flat();
+    const p3Headers = Array.from({ length: maxP3 }, (_, i) => `P3_C${i + 1}`);
+
+    const header = [
+      "STT", "Thời gian", "Họ và tên", "Lớp", "Môn thi", "Số báo danh", "Mã đề",
+      "Điểm P1", "Điểm P2", "Điểm P3", "Tổng điểm",
+      ...p1Headers, ...p2Headers, ...p3Headers
+    ].join(",");
+
+    const rows = historyList.map((item, i) => {
+      const p1Cols = Array.from({ length: maxP1 }, (_, j) => {
+        const q = item.breakdown?.part1?.[j];
+        return q ? (q.student || "") : "";
+      });
+      const p2Cols = Array.from({ length: maxP2 }, (_, j) => {
+        const q = item.breakdown?.part2?.[j];
+        return ["a", "b", "c", "d"].map(s => q?.subAnswers?.[s]?.student || "");
+      }).flat();
+      const p3Cols = Array.from({ length: maxP3 }, (_, j) => {
+        const q = item.breakdown?.part3?.[j];
+        return q ? (q.student || "") : "";
+      });
+
+      return [
+        i + 1,
+        `"${item.gradedAt}"`,
+        `"${item.studentName}"`,
+        `"${item.className || ""}"`,
+        `"${item.subjectName}"`,
+        `"${item.sbd}"`,
+        `"${item.examCode}"`,
+        (item.part1Score ?? "").toString(),
+        (item.part2Score ?? "").toString(),
+        (item.part3Score ?? "").toString(),
+        item.totalScore,
+        ...p1Cols,
+        ...p2Cols,
+        ...p3Cols,
+      ].join(",");
+    });
+
+    const csv = "﻿" + header + "\n" + rows.join("\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
     const a = Object.assign(document.createElement("a"), { href: url, download: `Ket_Qua_${Date.now()}.csv` });
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    showToast(`Đã xuất ${historyList.length} bài thi ra CSV!`);
   };
 
   const exportBackup = () => {
@@ -826,7 +888,7 @@ export default function App() {
         setActiveTemplateId={setActiveTemplateId}
       />
 
-      <main className="flex-1 p-5 pb-24 overflow-y-auto">
+      <main className="flex-1 p-5 overflow-y-auto" style={{ paddingBottom: "max(6rem, calc(env(safe-area-inset-bottom) + 4rem))" }}>
         {activeTab === "dashboard" && (
           <Dashboard
             historyList={historyList}

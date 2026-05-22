@@ -145,6 +145,8 @@ export default function History({
   const [filterScore, setFilterScore] = useState("all");
   const [showFilter, setShowFilter] = useState(false);
   const [detailItem, setDetailItem] = useState(null);
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 30;
 
   // Get unique subjects in history
   const subjects = useMemo(() => {
@@ -154,6 +156,7 @@ export default function History({
 
   // Filtered list
   const filtered = useMemo(() => {
+    setPage(1);
     return historyList.filter((item) => {
       const q = search.toLowerCase();
       const matchSearch = !q || item.studentName?.toLowerCase().includes(q) || (item.sbd || "").includes(q) || (item.examCode || "").includes(q) || (item.className || "").toLowerCase().includes(q);
@@ -166,7 +169,11 @@ export default function History({
         : true;
       return matchSearch && matchSubject && matchScore;
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [historyList, search, filterSubject, filterScore]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const pagedItems = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   // Score distribution (5 bands)
   const bands = [0, 0, 0, 0, 0];
@@ -358,7 +365,7 @@ export default function History({
               <p className="text-center py-10 text-slate-500 text-xs">Không có kết quả phù hợp.</p>
             ) : (
               <div className="space-y-3">
-                {filtered.map((item) => (
+                {pagedItems.map((item) => (
                   <div key={item.id} className="p-4 rounded-xl bg-slate-900 border border-slate-800 flex justify-between items-center gap-3">
                     <div className="space-y-1 min-w-0 flex-1">
                       <h4 className="text-xs font-bold text-slate-200 truncate">{item.studentName}</h4>
@@ -393,6 +400,30 @@ export default function History({
                     </div>
                   </div>
                 ))}
+              </div>
+            )}
+
+            {/* Pagination */}
+            {filtered.length > PAGE_SIZE && (
+              <div className="flex justify-center items-center gap-2 pt-1">
+                <button
+                  onClick={() => setPage(p => Math.max(1, p - 1))}
+                  disabled={page === 1}
+                  className="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs text-slate-400 disabled:opacity-40 hover:text-slate-200 active:scale-95 transition-all"
+                >
+                  ←
+                </button>
+                <span className="text-xs text-slate-500">
+                  Trang <b className="text-slate-300">{page}</b> / {totalPages}
+                  <span className="text-slate-600 ml-1">({filtered.length} bài)</span>
+                </span>
+                <button
+                  onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                  disabled={page === totalPages}
+                  className="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs text-slate-400 disabled:opacity-40 hover:text-slate-200 active:scale-95 transition-all"
+                >
+                  →
+                </button>
               </div>
             )}
           </div>

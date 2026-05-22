@@ -296,7 +296,7 @@ function ClassCard({
       });
 
       itemAnalysisHtml = `
-        <div class="section-title page-break">Phân tích chi tiết câu hỏi (Phần I)</div>
+        <div class="section-title page-break">Phân tích chi tiết câu hỏi (Phần I — Trắc nghiệm)</div>
         <p style="font-size: 11px; color: #64748b; margin-top: -10px; margin-bottom: 15px;">
           💡 <b>Cách đọc:</b> Ô màu xanh lá cây là đáp án đúng. Ô màu đỏ thể hiện lựa chọn sai phổ biến mà trên 20% học sinh chọn nhầm (mồi nhử mạnh).
         </p>
@@ -304,6 +304,113 @@ function ClassCard({
           ${analysisCards}
         </div>
       `;
+    }
+
+    // ── Part II analysis ──────────────────────────────────────────────────────
+    let p2AnalysisHtml = "";
+    let p2Count = 0;
+    classHistory.forEach(r => { if (r.breakdown?.part2?.length > p2Count) p2Count = r.breakdown.part2.length; });
+    if (p2Count > 0) {
+      const p2Stats = Array.from({ length: p2Count }, (_, i) => ({
+        num: i + 1, fullCorrect: 0,
+        subs: { a: { correct: 0, T: 0, F: 0, blank: 0, correctAns: "" },
+                b: { correct: 0, T: 0, F: 0, blank: 0, correctAns: "" },
+                c: { correct: 0, T: 0, F: 0, blank: 0, correctAns: "" },
+                d: { correct: 0, T: 0, F: 0, blank: 0, correctAns: "" } },
+      }));
+      classHistory.forEach(r => {
+        r.breakdown?.part2?.forEach((q, i) => {
+          if (!q || !p2Stats[i]) return;
+          if (q.correctCount === 4) p2Stats[i].fullCorrect++;
+          ["a", "b", "c", "d"].forEach(sub => {
+            const sd = q.subAnswers?.[sub];
+            if (!sd) return;
+            const s = p2Stats[i].subs[sub];
+            if (sd.isCorrect) s.correct++;
+            if (sd.correct) s.correctAns = sd.correct;
+            if (sd.student === "T") s.T++; else if (sd.student === "F") s.F++; else s.blank++;
+          });
+        });
+      });
+
+      let p2Cards = "";
+      p2Stats.forEach(q => {
+        const fullRate = totalGraded > 0 ? Math.round(q.fullCorrect / totalGraded * 100) : 0;
+        const rateCol = fullRate < 40 ? "#ef4444" : fullRate < 70 ? "#d97706" : "#16a34a";
+        let subHtml = "";
+        ["a", "b", "c", "d"].forEach(sub => {
+          const s = q.subs[sub];
+          const rate = totalGraded > 0 ? Math.round(s.correct / totalGraded * 100) : 0;
+          const ans = s.correctAns === "T" ? "Đ" : s.correctAns === "F" ? "S" : "?";
+          const col = rate < 40 ? "#ef4444" : rate < 70 ? "#d97706" : "#16a34a";
+          subHtml += `
+            <div style="flex:1; padding:6px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px;">
+              <div style="display:flex; justify-content:space-between; font-size:9px;">
+                <b style="color:#334155;">${sub.toUpperCase()}</b>
+                <span style="color:#64748b;">ĐA:${ans}</span>
+              </div>
+              <div style="font-weight:800; color:${col}; font-size:10px; margin-top:2px;">${rate}%</div>
+              <div style="font-size:8px; color:#94a3b8;">Đ:${Math.round(s.T/totalGraded*100)}% S:${Math.round(s.F/totalGraded*100)}%</div>
+            </div>`;
+        });
+        p2Cards += `
+          <div class="analysis-card">
+            <div class="analysis-header">
+              <span>Câu ${q.num}</span>
+              <span style="color:${rateCol}; font-weight:bold;">${fullRate}% đúng 4/4</span>
+            </div>
+            <div style="display:flex; gap:4px; margin-top:6px;">${subHtml}</div>
+          </div>`;
+      });
+
+      p2AnalysisHtml = `
+        <div class="section-title page-break">Phân tích chi tiết câu hỏi (Phần II — Đúng/Sai)</div>
+        <div class="item-analysis-grid">${p2Cards}</div>`;
+    }
+
+    // ── Part III analysis ─────────────────────────────────────────────────────
+    let p3AnalysisHtml = "";
+    let p3Count = 0;
+    classHistory.forEach(r => { if (r.breakdown?.part3?.length > p3Count) p3Count = r.breakdown.part3.length; });
+    if (p3Count > 0) {
+      const p3Stats = Array.from({ length: p3Count }, (_, i) => ({
+        num: i + 1, correct: 0, correctAns: "", wrongAnswers: {},
+      }));
+      classHistory.forEach(r => {
+        r.breakdown?.part3?.forEach((q, i) => {
+          if (!q || !p3Stats[i]) return;
+          if (q.correct) p3Stats[i].correctAns = q.correct;
+          if (q.isCorrect) { p3Stats[i].correct++; }
+          else if (q.student) { const a = q.student.trim(); p3Stats[i].wrongAnswers[a] = (p3Stats[i].wrongAnswers[a] || 0) + 1; }
+        });
+      });
+
+      let p3Rows = "";
+      p3Stats.forEach(q => {
+        const rate = totalGraded > 0 ? Math.round(q.correct / totalGraded * 100) : 0;
+        const rateCol = rate < 40 ? "#ef4444" : rate < 70 ? "#d97706" : "#16a34a";
+        const topWrong = Object.entries(q.wrongAnswers).sort((a, b) => b[1] - a[1]).slice(0, 3);
+        const wrongStr = topWrong.map(([ans, cnt]) => `<span style="background:#fee2e2;color:#b91c1c;padding:1px 5px;border-radius:4px;font-family:monospace;">${ans} (${Math.round(cnt/totalGraded*100)}%)</span>`).join(" ");
+        p3Rows += `
+          <tr>
+            <td style="font-weight:bold;">Câu ${q.num}</td>
+            <td style="font-family:monospace; color:#16a34a; font-weight:bold;">${q.correctAns || "?"}</td>
+            <td style="font-weight:800; color:${rateCol};">${rate}%</td>
+            <td>${wrongStr || "—"}</td>
+          </tr>`;
+      });
+
+      p3AnalysisHtml = `
+        <div class="section-title page-break">Phân tích chi tiết câu hỏi (Phần III — Trả lời ngắn)</div>
+        <table style="width:100%; border-collapse:collapse; font-size:11px; margin-top:8px;">
+          <thead><tr style="background:#f1f5f9;">
+            <th style="padding:6px; text-align:left; border:1px solid #e2e8f0;">Câu</th>
+            <th style="padding:6px; text-align:center; border:1px solid #e2e8f0;">Đáp án</th>
+            <th style="padding:6px; text-align:center; border:1px solid #e2e8f0;">Tỉ lệ đúng</th>
+            <th style="padding:6px; text-align:left; border:1px solid #e2e8f0;">Sai phổ biến</th>
+          </tr></thead>
+          <tbody>${p3Rows}</tbody>
+        </table>`;
     }
 
     const printWin = window.open("", "_blank");
@@ -729,7 +836,9 @@ function ClassCard({
           </table>
           
           ${itemAnalysisHtml}
-          
+          ${p2AnalysisHtml}
+          ${p3AnalysisHtml}
+
           <div class="signature-block">
             <div class="signature-wrap">
               <div class="signature-title">Người lập báo cáo<br><span style="font-weight: normal; font-size: 10px; color: #64748b;">(Ký, ghi rõ họ tên)</span></div>

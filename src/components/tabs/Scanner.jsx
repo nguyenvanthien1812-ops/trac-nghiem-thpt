@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Camera, X, ArrowLeft, RefreshCw, RotateCcw, RotateCw, Upload, Save, Loader } from "lucide-react";
 import { SHEET_WIDTH, SHEET_HEIGHT } from "../../utils/constants";
-import { scanSheet, preprocessImage, findCornerMarkers, computeAutoCalibration } from "../../utils/cvEngine";
+import { scanSheet, preprocessImage, findCornerMarkers, computeAutoCalibration, computeHomography, warpPerspective } from "../../utils/cvEngine";
 
 export default function Scanner({
   imageSrc,
@@ -37,8 +37,13 @@ export default function Scanner({
   const [detectedCorners, setDetectedCorners] = useState({ tl: false, tr: false, bl: false, br: false });
   const [isAutoCapture, setIsAutoCapture] = useState(true);
   const autoCaptureIntervalRef = useRef(null);
+  const [isMuted, setIsMuted] = useState(false);
+  const isMutedRef = useRef(false);
+  useEffect(() => { isMutedRef.current = isMuted; }, [isMuted]);
+  const [perspStatus, setPerspStatus] = useState(null); // null | "ok" | "manual"
 
   const playBeep = () => {
+    if (isMutedRef.current) return;
     try {
       const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       const osc1 = audioCtx.createOscillator();
@@ -169,25 +174,51 @@ export default function Scanner({
         canvas.height = SHEET_HEIGHT;
         const ctx = canvas.getContext("2d");
 
-        // Draw image with rotation applied around center
-        const rotation = adjustments.rotation || 0;
-        if (rotation !== 0) {
-          const rad = (rotation * Math.PI) / 180;
+        // Draw image without rotation — perspective correction will handle alignment
+        ctx.drawImage(img, 0, 0, SHEET_WIDTH, SHEET_HEIGHT);
+        preprocessImage(ctx, SHEET_WIDTH, SHEET_HEIGHT);
+
+        // Attempt perspective correction using corner markers
+        const imgDataForCorners = ctx.getImageData(0, 0, SHEET_WIDTH, SHEET_HEIGHT);
+        const corners = findCornerMarkers(imgDataForCorners, SHEET_WIDTH, SHEET_HEIGHT);
+        let perspectiveCorrected = false;
+
+        if (corners) {
+          const MARGIN = 27;
+          // H maps canonical output coords → source (distorted photo) coords (backward mapping)
+          const H = computeHomography(
+            [{ x: MARGIN, y: MARGIN }, { x: SHEET_WIDTH - MARGIN, y: MARGIN },
+             { x: MARGIN, y: SHEET_HEIGHT - MARGIN }, { x: SHEET_WIDTH - MARGIN, y: SHEET_HEIGHT - MARGIN }],
+            [corners.tl, corners.tr, corners.bl, corners.br]
+          );
+          if (H) {
+            warpPerspective(imgDataForCorners, ctx, H, SHEET_WIDTH, SHEET_HEIGHT);
+            preprocessImage(ctx, SHEET_WIDTH, SHEET_HEIGHT);
+            perspectiveCorrected = true;
+          }
+        }
+
+        // If perspective correction failed, fall back to manual rotation + saved calibration
+        if (!perspectiveCorrected && (adjustments.rotation || 0) !== 0) {
+          ctx.clearRect(0, 0, SHEET_WIDTH, SHEET_HEIGHT);
+          const rad = (adjustments.rotation * Math.PI) / 180;
           ctx.save();
           ctx.translate(SHEET_WIDTH / 2, SHEET_HEIGHT / 2);
           ctx.rotate(rad);
           ctx.translate(-SHEET_WIDTH / 2, -SHEET_HEIGHT / 2);
           ctx.drawImage(img, 0, 0, SHEET_WIDTH, SHEET_HEIGHT);
           ctx.restore();
-        } else {
-          ctx.drawImage(img, 0, 0, SHEET_WIDTH, SHEET_HEIGHT);
+          preprocessImage(ctx, SHEET_WIDTH, SHEET_HEIGHT);
         }
 
-        // Auto-contrast preprocessing
-        preprocessImage(ctx, SHEET_WIDTH, SHEET_HEIGHT);
+        const effectiveAdjustments = perspectiveCorrected
+          ? { nudgeX: 0, nudgeY: 0, scaleX: 1, scaleY: 1, rotation: 0 }
+          : adjustments;
+
+        setPerspStatus(perspectiveCorrected ? "ok" : "manual");
 
         // Scan bubbles
-        const results = scanSheet(ctx, activeTemplate.layout, adjustments, activeTemplate);
+        const results = scanSheet(ctx, activeTemplate.layout, effectiveAdjustments, activeTemplate);
         onScanResult(results);
 
         // Draw overlay on top of preprocessed image
@@ -379,14 +410,22 @@ export default function Scanner({
             </button>
           </div>
 
-          {/* Smart Auto-Capture Toggle */}
-          <div className="absolute top-4 right-4 bg-slate-900/80 backdrop-blur-sm py-2 px-3 rounded-xl border border-slate-700 flex items-center gap-2">
-            <span className="text-[10px] font-bold text-slate-300">Tự động chụp:</span>
+          {/* Smart Auto-Capture Toggle + Mute */}
+          <div className="absolute top-4 right-4 flex flex-col gap-1.5">
+            <div className="bg-slate-900/80 backdrop-blur-sm py-2 px-3 rounded-xl border border-slate-700 flex items-center gap-2">
+              <span className="text-[10px] font-bold text-slate-300">Tự động chụp:</span>
+              <button
+                onClick={() => setIsAutoCapture(!isAutoCapture)}
+                className={`w-10 h-5 rounded-full relative transition-colors ${isAutoCapture ? "bg-emerald-600" : "bg-slate-700"}`}
+              >
+                <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${isAutoCapture ? "translate-x-5" : "translate-x-0.5"}`} />
+              </button>
+            </div>
             <button
-              onClick={() => setIsAutoCapture(!isAutoCapture)}
-              className={`w-10 h-5 rounded-full relative transition-colors ${isAutoCapture ? "bg-emerald-600" : "bg-slate-700"}`}
+              onClick={() => setIsMuted(m => !m)}
+              className={`bg-slate-900/80 backdrop-blur-sm py-1.5 px-3 rounded-xl border text-[10px] font-bold transition-all ${isMuted ? "border-amber-700 text-amber-400" : "border-slate-700 text-slate-400"}`}
             >
-              <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${isAutoCapture ? "translate-x-5" : "translate-x-0.5"}`} />
+              {isMuted ? "🔇 Tắt tiếng" : "🔔 Âm thanh"}
             </button>
           </div>
 
@@ -519,9 +558,20 @@ export default function Scanner({
             </div>
 
             {/* Scan info */}
-            <div className="grid grid-cols-2 gap-2 text-[10px] font-mono text-slate-500 border-t border-slate-800 pt-2 text-center">
-              <div>SBD: <span className="text-emerald-400 font-bold">{scanResult?.sbd || "—"}</span></div>
-              <div>Mã đề: <span className="text-emerald-400 font-bold">{scanResult?.code || "—"}</span></div>
+            <div className="border-t border-slate-800 pt-2 space-y-1.5">
+              <div className="grid grid-cols-2 gap-2 text-[10px] font-mono text-slate-500 text-center">
+                <div>SBD: <span className="text-emerald-400 font-bold">{scanResult?.sbd || "—"}</span></div>
+                <div>Mã đề: <span className="text-emerald-400 font-bold">{scanResult?.code || "—"}</span></div>
+              </div>
+              {perspStatus && (
+                <div className={`text-center text-[9px] font-bold py-0.5 px-2 rounded-lg ${
+                  perspStatus === "ok"
+                    ? "bg-emerald-900/30 text-emerald-400"
+                    : "bg-amber-900/30 text-amber-400"
+                }`}>
+                  {perspStatus === "ok" ? "✓ Căn chỉnh phối cảnh tự động" : "⚠ Không tìm thấy góc — dùng căn chỉnh thủ công"}
+                </div>
+              )}
             </div>
 
             <button

@@ -310,7 +310,12 @@ export default function ResultModal({
         {/* Part II */}
         {gradingResult.p2Breakdown.length > 0 && (
           <div className="p-4 rounded-2xl bg-slate-900/50 border border-slate-800 space-y-3">
-            <h4 className="text-xs font-bold text-slate-300">Phần II: Đúng / Sai</h4>
+            <div className="flex justify-between items-start">
+              <h4 className="text-xs font-bold text-slate-300">Phần II: Đúng / Sai</h4>
+              <span className="text-[9px] text-slate-500 text-right leading-relaxed">
+                1ý=0.1đ · 2ý=0.25đ<br/>3ý=0.5đ · 4ý=1.0đ
+              </span>
+            </div>
             <div className="space-y-3 text-xs">
               {gradingResult.p2Breakdown.map((q, qIdx) => (
                 <div key={qIdx} className="p-3 rounded-lg bg-slate-950 border border-slate-800 space-y-2">
